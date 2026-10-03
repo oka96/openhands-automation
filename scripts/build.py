@@ -82,12 +82,13 @@ def expected_files(root: Path) -> dict[Path, str]:
         directory = Path("automations") / f"openspec-{number:02d}-{stage}"
         automation = {
             "name": f"OpenSpec {number:02d} · {stage.title()}",
-            "state": "INACTIVE",
-            "enabled": False,
+            "state": "ACTIVE",
+            "enabled": True,
             "trigger": {
-                "type": "cron",
-                "schedule": "0 0 1 1 *",
-                "timezone": "Asia/Kuala_Lumpur",
+                "type": "event",
+                "source": "openspec-manual",
+                "on": "manual-only",
+                "filter": "`false`",
             },
             "entrypoint": "python3 run.py",
             "timeout": config["timeout_seconds"],

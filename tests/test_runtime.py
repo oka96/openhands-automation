@@ -76,7 +76,10 @@ class RunnerTests(unittest.TestCase):
         self.prompt_path.write_text("Review the selected change. Return terminal JSON.")
         self.env = {"AGENT_SERVER_URL": "http://127.0.0.1:18020", "SESSION_API_KEY": "session-secret",
                     "AUTOMATION_CALLBACK_URL": "http://127.0.0.1:18021/callback",
-                    "AUTOMATION_CALLBACK_API_KEY": "callback-secret", "AUTOMATION_RUN_ID": "run-id"}
+                    "AUTOMATION_CALLBACK_API_KEY": "callback-secret", "AUTOMATION_RUN_ID": "run-id",
+                    "AUTOMATION_EVENT_PAYLOAD": json.dumps({"trigger": "event", "trigger_payload": {
+                        "type": "event", "source": "openspec-manual", "on": "manual-only", "filter": "`false`"},
+                        "automation_id": "automation-id", "automation_name": "OpenSpec Verify"})}
 
     def write_config(self):
         self.config_path.write_text(json.dumps(self.config))
@@ -230,12 +233,42 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(server.calls[-1][1]["body"]["status"], "COMPLETED")
 
     def test_check_mode_performs_no_api_calls_or_callback(self):
+        self.env.pop("AUTOMATION_EVENT_PAYLOAD")
         with mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback") as callback:
             code, output = self.invoke("--check")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["status"], "valid")
         client.assert_not_called()
         callback.assert_not_called()
+
+    def test_manual_run_trigger_starts_conversation(self):
+        with mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback") as callback:
+            client.return_value.run.return_value = SUCCESS
+            code, output = self.invoke()
+        self.assertEqual(code, 0)
+        client.return_value.run.assert_called_once()
+        self.assertEqual(callback.call_args.args[0]["status"], "completed")
+
+    def test_missing_malformed_scheduled_and_delivered_events_cannot_start_agent(self):
+        manual = json.loads(self.env["AUTOMATION_EVENT_PAYLOAD"])
+        invalid = [None, "not-json", "[]", "{}", json.dumps({**manual, "trigger": "cron"}),
+                   json.dumps({**manual, "event": {"action": "dispatch"}}),
+                   json.dumps({**manual, "event": None}),
+                   json.dumps({**manual, "trigger_payload": {"type": "event", "source": "github", "on": "manual-only"}}),
+                   json.dumps({**manual, "trigger_payload": {"type": "event", "source": "openspec-manual", "on": "other"}}),
+                   json.dumps({**manual, "trigger_payload": {"type": "event", "source": "openspec-manual", "on": "manual-only"}}),
+                   json.dumps({**manual, "trigger_payload": {**manual["trigger_payload"], "filter": "`true`"}})]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                if payload is None:
+                    self.env.pop("AUTOMATION_EVENT_PAYLOAD", None)
+                else:
+                    self.env["AUTOMATION_EVENT_PAYLOAD"] = payload
+                with mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback") as callback:
+                    code, output = self.invoke()
+                self.assertEqual(code, 1)
+                client.assert_not_called()
+                self.assertEqual(callback.call_args.args[0]["status"], "blocked")
 
     def test_preflight_failure_fires_failed_callback_without_starting_agent(self):
         self.config["stage"] = "update"

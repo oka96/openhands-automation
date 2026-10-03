@@ -1,11 +1,12 @@
 {
   "name": "OpenSpec 02 · Propose",
-  "state": "INACTIVE",
-  "enabled": false,
+  "state": "ACTIVE",
+  "enabled": true,
   "trigger": {
-    "type": "cron",
-    "schedule": "0 0 1 1 *",
-    "timezone": "Asia/Kuala_Lumpur"
+    "type": "event",
+    "source": "openspec-manual",
+    "on": "manual-only",
+    "filter": "`false`"
   },
   "entrypoint": "python3 run.py",
   "timeout": 1800,

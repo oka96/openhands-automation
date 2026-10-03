@@ -38,11 +38,15 @@ many steps internally, but its completion never dispatches another stage.
 | OpenSpec 06 · Sync specs | Merge delta specs into main specs | Keep change active |
 | OpenSpec 07 · Archive | Archive completed, already synced work | Block on incomplete tasks, unsynced deltas, or failed checks |
 
-All definitions use `state: INACTIVE` and `enabled: false`. OpenHands 1.15.1 still
-allows **Run** for inactive automations. Its schema requires a cron or event
-trigger, so these use a dormant yearly cron expression. **Keep them inactive**:
-enabling one would activate its schedule. Git Sync's refresh interval is separate
-from automation scheduling and never authorizes the next OpenSpec stage.
+OpenHands requires a cron or event trigger, and Canvas 1.24.0 disables **Run** for
+inactive definitions. These definitions therefore stay active with the reserved
+event source `openspec-manual` and event `manual-only`. That source is deliberately
+not registered, there is no schedule, and a constant-false JMESPath filter rejects
+all automatic event matches. The runner also validates this trigger configuration
+and rejects delivered event payloads, so only ordinary manual dispatch can start an
+agent. Do not register
+a webhook for this source or replace its trigger with a schedule. Git Sync's
+refresh interval never authorizes the next OpenSpec stage.
 
 Selecting Apply is the human's approval of the configured change's current
 planning artifacts. Selecting Sync or Archive is a separate explicit approval of
@@ -102,7 +106,7 @@ In the local OpenHands instance, open **Automate → Git Sync**:
 Save and sync, then verify that all seven named automations appear. An overall
 successful sync can still skip an invalid directory, so check the imported rows.
 For periodic configuration refresh, set a positive sync interval in that page;
-leave the individual automations inactive to retain manual approval gates.
+preserve the individual automations' reserved event triggers and manual-run guards.
 
 Git Sync is bidirectional: it pulls, imports, exports service-side edits, and
 pushes. It needs write access if OpenHands has changes to export. Use existing Git
@@ -147,7 +151,8 @@ the linked conversation for the actionable explanation. If the conversation itse
 needs tool approval, this version reports it as blocked rather than granting that
 approval automatically.
 
-This is designed for the current **native local** Agent Server, Automation 1.15.1,
+This is designed for the current **native local** Agent Server, Canvas 1.24.0,
+Automation 1.15.1,
 and Agent Server 1.49.6. Docker or cloud deployments require accessible workspace
 mounts and a different server-address policy; merely copying this Mac path into a
 cloud automation will not work. Existing user work is preserved, and the prompts

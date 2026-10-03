@@ -5,7 +5,9 @@ application is configured in `workflow.json`; this repository is not that applic
 
 - Edit `workflow.json`, `prompts/`, and `runtime/run.py`, then run `npm run build`.
 - `automations/` contains complete generated bundles required by Git Sync. Commit them.
-- Preserve `state: INACTIVE` and `enabled: false`. Manual Run is the approval gate.
+- Preserve the reserved `openspec-manual` event trigger, its constant-false filter,
+  and the runner's rejection of delivered events. Manual Run is the approval gate;
+  do not register that source.
 - Never put credentials, session keys, or model tokens in files. Use the runtime's
   injected environment and the user's saved OpenHands agent profile.
 - Keep the runtime Python standard-library only. Do not introduce ADLC skills:

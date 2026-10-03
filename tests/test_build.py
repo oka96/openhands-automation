@@ -34,16 +34,17 @@ class BuildTests(unittest.TestCase):
     def write_config(self):
         (self.root / "workflow.json").write_text(json.dumps(self.config))
 
-    def test_builds_seven_complete_independent_inactive_bundles(self):
+    def test_builds_seven_complete_independent_manual_run_bundles(self):
         self.assertEqual(len(builder.build(self.root)), 28)
         self.assertEqual(len(list((self.root / "automations").iterdir())), 7)
         for number, stage in enumerate(builder.STAGES, start=1):
             directory = self.root / "automations" / f"openspec-{number:02d}-{stage}"
             automation = json.loads((directory / "automation.yaml").read_text())
-            self.assertEqual(automation["state"], "INACTIVE")
-            self.assertFalse(automation["enabled"])
+            self.assertEqual(automation["state"], "ACTIVE")
+            self.assertTrue(automation["enabled"])
             self.assertEqual(automation["trigger"], {
-                "type": "cron", "schedule": "0 0 1 1 *", "timezone": "Asia/Kuala_Lumpur"
+                "type": "event", "source": "openspec-manual", "on": "manual-only",
+                "filter": "`false`",
             })
             self.assertEqual(automation["entrypoint"], "python3 run.py")
             self.assertEqual(automation["timeout"], 1800)

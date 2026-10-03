@@ -154,6 +154,22 @@ def load_config(path):
     return config
 
 
+def require_manual_trigger(env):
+    """Allow the dashboard's Run action, never a delivered event or schedule."""
+    try:
+        payload = json.loads(env.get("AUTOMATION_EVENT_PAYLOAD", ""))
+    except (TypeError, ValueError):
+        raise RunError("A valid manual OpenSpec automation trigger is required") from None
+    if not isinstance(payload, dict):
+        raise RunError("A valid manual OpenSpec automation trigger is required")
+    trigger = payload.get("trigger_payload")
+    if (payload.get("trigger") != "event" or "event" in payload
+            or not isinstance(trigger, dict) or trigger.get("type") != "event"
+            or trigger.get("source") != "openspec-manual" or trigger.get("on") != "manual-only"
+            or trigger.get("filter") != "`false`"):
+        raise RunError("This OpenSpec stage must be started manually from its Run action")
+
+
 def terminal_result(response):
     if not isinstance(response, str):
         raise RunError("Agent did not return the required terminal JSON result")
@@ -320,6 +336,7 @@ def main(argv=None, *, env=None):
         if not env.get("AUTOMATION_CALLBACK_URL") or not env.get("AUTOMATION_CALLBACK_API_KEY") or not env.get("AUTOMATION_RUN_ID"):
             raise RunError("Automation callback environment is incomplete")
         local_url(env["AUTOMATION_CALLBACK_URL"], origin_only=False)
+        require_manual_trigger(env)
         origin = env.get("AGENT_SERVER_URL")
         key = env.get("SESSION_API_KEY") or env.get("OH_SESSION_API_KEYS_0")
         if not origin or not key:
