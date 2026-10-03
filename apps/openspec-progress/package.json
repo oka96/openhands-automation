@@ -1,0 +1,20 @@
+{
+  "name": "@openhands-local/openspec-progress",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only OpenSpec progress page for OpenHands Canvas",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "node scripts/validate.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run build && npm test && npm run validate"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "jsdom": "30.1.1"
+  }
+}

@@ -16,3 +16,8 @@ application is configured in `workflow.json`; this repository is not that applic
 - Do not modify the target application while maintaining these definitions.
 - Do not commit or push target-application work from an automation. Each stage
   stops at its stated boundary and reports blockers honestly.
+
+Apps in `apps/` are independent packages, installed separately from Automation Git
+Sync. Keep each App's source, manifest, build tooling, tests, and checked-in
+`extension.js` inside its package. Run its `npm run check` as well as the root
+checks. The OpenSpec progress App is read-only; preserve that boundary.

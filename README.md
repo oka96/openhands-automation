@@ -17,6 +17,11 @@ OpenHands manages dispatch, conversations, logs, and run status.
 
 ## Workflow and approval gates
 
+For a read-only view of active changes, artifacts, and task checklists, install
+the [OpenSpec progress App](apps/openspec-progress/README.md). It runs inside
+OpenHands and refreshes from the target project's OpenSpec CLI. Apps have a
+separate installation flow from Automation Git Sync.
+
 ```text
 Explore → Propose → human reviews artifacts → Apply → Verify
               ↑                                │       │
