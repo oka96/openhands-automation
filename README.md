@@ -175,6 +175,17 @@ or running an agent. Unit tests use a fake API for lifecycle and failure cases.
 Live verification is a separate **Run** of Explore in OpenHands. Do not run Apply,
 Sync, or Archive just to test the automation plumbing.
 
+Validated on 2026-10-03: all 30 unit tests and bundle checks passed; Git Sync
+imported all seven stages; a manual Explore run completed through `codex-acp-demo`
+and reported its callback and linked conversation without system errors. The
+demo's file fingerprint was identical before and after the run. Canvas labels
+the completed custom task **Needs review**; open its conversation to review the
+result and choose the next stage. This smoke test does not certify the other six
+stages against a real change or replace an independent Verify run.
+
+Local smoke-test run: `ae89264e-60bf-4e3e-a929-23d4d0b9510a`;
+conversation: `eb824925-b0df-4ec2-8847-45be0ee123e3`.
+
 Sources: [OpenHands Git Sync](https://docs.openhands.dev/openhands/usage/agent-canvas/git-sync),
 [1.15.1 serializer](https://github.com/OpenHands/automation/blob/1.15.1/openhands/automation/git_sync/serializer.py),
 [dispatch and callbacks](https://github.com/OpenHands/automation/blob/1.15.1/openhands/automation/router.py),
