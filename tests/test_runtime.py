@@ -40,6 +40,10 @@ class FakeServer:
             return {"conversation_settings": {"confirmation_mode": True, "security_analyzer": "llm"}}
         if path == "/api/conversations":
             return {"id": kwargs["body"]["conversation_id"]}
+        if path.startswith("/api/conversations/") and kwargs.get("method") == "PATCH":
+            return {"success": True}
+        if path.endswith("/events") and kwargs.get("method") == "POST":
+            return {"success": True}
         if path.endswith("/pause"):
             return {}
         if path.endswith("/agent_final_response"):
@@ -186,12 +190,86 @@ class RunnerTests(unittest.TestCase):
         body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
         self.assertEqual(body["agent_profile_id"], "selected-profile")
 
+    def test_role_conversations_name_target_before_execution_and_preserve_origin_tags_for_every_role_and_skill(self):
+        skills = {"propose": "openspec-propose", "update": "openspec-update-change",
+                  "apply": "openspec-apply-change"}
+        for stage, skill in skills.items():
+            for role in ("SA", "Frontend", "Backend", "QA"):
+                with self.subTest(stage=stage, role=role):
+                    server = FakeServer()
+                    config = {**self.config, "mode": "role", "stage": stage, "role": role,
+                              "requirement_id": "REQ-006", "context_change": "context-change",
+                              "change": "new-proposal" if stage == "propose" else "context-change"}
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.client(server).run(config, "role prompt", run_id="role-run-id")
+                    body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
+                    self.assertFalse(body["autotitle"])
+                    self.assertIsNone(body["initial_message"])
+                    mutations = [(path, call) for path, call in server.calls if call.get("method") in ("POST", "PATCH")]
+                    self.assertEqual([call["method"] for _, call in mutations], ["POST", "PATCH", "POST"])
+                    conversation_path = "/api/conversations/" + body["conversation_id"]
+                    self.assertEqual(mutations[1][0], conversation_path)
+                    self.assertEqual(mutations[1][1]["body"], {"title": f"[{role}] {config['change']}"})
+                    self.assertEqual(mutations[2][0], conversation_path + "/events")
+                    self.assertEqual(mutations[2][1]["body"], {
+                        "role": "user", "content": [{"type": "text", "text": "role prompt"}], "run": True})
+                    self.assertEqual(body["tags"], {
+                        "requirement": "REQ-006", "role": role, "openspecstage": stage,
+                        "openspecskill": skill, "openspecchange": config["change"],
+                        "automationrunid": "role-run-id", "automationtrigger": "automation"})
+
+    def test_role_naming_failure_never_starts_agent(self):
+        for outcome in ("transport", "rejected"):
+            with self.subTest(outcome=outcome):
+                server = FakeServer()
+                request = server.request
+                def failing_title(url, **kwargs):
+                    if kwargs.get("method") == "PATCH":
+                        server.calls.append((urllib_path(url), kwargs))
+                        if outcome == "transport":
+                            raise runner.RunError("Title update response lost")
+                        return {"success": False}
+                    return request(url, **kwargs)
+                client = runner.Client("http://127.0.0.1:18000", "secret", requester=failing_title,
+                                       clock=lambda: server.now, sleep=server.sleep)
+                config = {**self.config, "mode": "role", "role": "SA", "requirement_id": "REQ-006"}
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(runner.RunError):
+                    client.run(config, "role prompt")
+                self.assertFalse(any(path.endswith("/events") or path.endswith("/run") for path, _ in server.calls))
+                created = next(call['body'] for path, call in server.calls if path == '/api/conversations')
+                self.assertIsNone(created['initial_message'])
+                self.assertTrue(server.calls[-1][0].endswith("/pause"))
+
+    def test_legacy_conversations_tag_exact_skill_without_inventing_role_or_requirement(self):
+        skills = {"explore": "openspec-explore", "propose": "openspec-propose",
+                  "update": "openspec-update-change", "apply": "openspec-apply-change",
+                  "verify": "openspec-apply-change", "sync": "openspec-sync-specs",
+                  "archive": "openspec-archive-change"}
+        for stage, skill in skills.items():
+            with self.subTest(stage=stage):
+                server = FakeServer()
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.client(server).run({**self.config, "stage": stage}, "stage prompt", run_id="legacy-run-id")
+                body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
+                self.assertEqual(body["tags"], {
+                    "openspecstage": stage, "openspecskill": skill, "openspecchange": "example-change",
+                    "automationrunid": "legacy-run-id", "automationtrigger": "automation"})
+
     def test_idle_does_not_count_as_finished_and_timeout_pauses(self):
         server = FakeServer(["idle"] * 40)
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(runner.RunError, "timed out"):
             self.client(server).run(self.config, "prompt")
         self.assertEqual(server.now, 30)
         self.assertFalse(any(path.endswith("/agent_final_response") for path, _ in server.calls))
+        self.assertTrue(server.calls[-1][0].endswith("/pause"))
+
+    def test_role_preflight_time_counts_toward_deadline_and_reserves_postflight(self):
+        server = FakeServer(["running"] * 40)
+        server.now = 15
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(runner.RunError, "timed out"):
+            self.client(server).run({**self.config, "mode": "role", "requirement_id": "REQ-006", "role": "SA"},
+                                    "role prompt", deadline=60)
+        self.assertEqual(server.now, 30)
         self.assertTrue(server.calls[-1][0].endswith("/pause"))
 
     def test_waiting_for_confirmation_and_invalid_final_pause(self):

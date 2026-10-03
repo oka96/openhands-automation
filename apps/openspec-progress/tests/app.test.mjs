@@ -13,6 +13,7 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 async function validationFixture(t, source = "export function activate() {}\n") {
   const root = await mkdtemp(path.join(os.tmpdir(), "openspec-app-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ type: "module" }));
   await copyFile(path.join(appRoot, "canvas-extension.json"), path.join(root, "canvas-extension.json"));
   await mkdir(path.join(root, "dist"));
   await writeFile(path.join(root, "dist", "extension.js"), source);

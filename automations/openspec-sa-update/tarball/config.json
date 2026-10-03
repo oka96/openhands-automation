@@ -1,0 +1,12 @@
+{
+  "workspace": "/Users/oka/Desktop/openhands-demo",
+  "spec_store": "/Users/oka/Desktop/openspec-store",
+  "store_id": "openspec-store",
+  "skill_root": "/Users/oka/Desktop/openhands-demo",
+  "profile": "codex-acp-demo",
+  "timeout_seconds": 1800,
+  "canvas_url": "http://127.0.0.1:8000",
+  "mode": "role",
+  "stage": "update",
+  "role": "SA"
+}

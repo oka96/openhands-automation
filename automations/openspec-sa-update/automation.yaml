@@ -1,0 +1,17 @@
+{
+  "name": "OpenSpec SA · Update",
+  "state": "ACTIVE",
+  "enabled": true,
+  "trigger": {
+    "type": "event",
+    "source": "openspec-role-dashboard",
+    "on": "update.requested",
+    "filter": "schema == 'openspec-role-dashboard/v1' && stage == 'update' && approval == 'update' && role == 'SA'"
+  },
+  "entrypoint": "python3 run.py",
+  "timeout": 1800,
+  "keep_alive": false,
+  "tarball_source": {
+    "type": "internal"
+  }
+}
