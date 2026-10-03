@@ -1,0 +1,9 @@
+{
+  "workspace": "/Users/oka/Desktop/openHanda-demo",
+  "change": "add-task-completion",
+  "request": "",
+  "profile": "codex-acp-demo",
+  "timeout_seconds": 1800,
+  "canvas_url": "http://127.0.0.1:8002",
+  "stage": "archive"
+}

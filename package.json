@@ -1,0 +1,11 @@
+{
+  "name": "openhands-openspec-automations",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Git-synced OpenHands automations for the OpenSpec workflow",
+  "scripts": {
+    "build": "python3 scripts/build.py",
+    "check": "python3 scripts/build.py --check",
+    "test": "python3 -m unittest discover -s tests -v"
+  }
+}

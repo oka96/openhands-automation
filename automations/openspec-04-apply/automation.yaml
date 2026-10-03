@@ -1,0 +1,16 @@
+{
+  "name": "OpenSpec 04 · Apply",
+  "state": "INACTIVE",
+  "enabled": false,
+  "trigger": {
+    "type": "cron",
+    "schedule": "0 0 1 1 *",
+    "timezone": "Asia/Kuala_Lumpur"
+  },
+  "entrypoint": "python3 run.py",
+  "timeout": 1800,
+  "keep_alive": false,
+  "tarball_source": {
+    "type": "internal"
+  }
+}
