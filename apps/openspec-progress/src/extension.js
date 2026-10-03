@@ -1,5 +1,6 @@
 import styles from './styles.css';
 import { loadOverview, loadChange, validateWorkspace } from './client.js';
+import { mountAutomation } from './automation.js';
 
 const DEFAULT_WORKSPACE = '/Users/oka/Desktop/openHanda-demo';
 const STATE_LABELS = { done: 'Done', ready: 'Ready to write', blocked: 'Blocked', skipped: 'Skipped' };
@@ -50,6 +51,7 @@ export function activate(host) {
     let snapshot = null;
     let detail = null;
     let busy = false;
+    let disposeAutomation;
     const requested = path ? /^changes\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(path) : null;
     const root = el('section', 'osp-root');
     const style = el('style');
@@ -61,6 +63,7 @@ export function activate(host) {
     function dispose() {
       disposed = true;
       generation++;
+      disposeAutomation?.();
       root.remove();
       disposers.delete(dispose);
     }
@@ -83,7 +86,7 @@ export function activate(host) {
       el('p', 'osp-subtitle', 'Planning artifacts and implementation checklists, directly from OpenSpec.'));
     const actions = el('div', 'osp-actions');
     const refresh = button('Refresh', 'osp-button osp-primary', () => refreshData());
-    actions.append(el('span', 'osp-readonly', 'Read only'), refresh);
+    actions.append(el('span', 'osp-readonly', 'Manual actions'), refresh);
     header.append(heading, actions);
 
     const form = el('form', 'osp-project');
@@ -124,6 +127,12 @@ export function activate(host) {
     columns.append(changePanel, detailPanel);
     const footer = el('footer', 'osp-footer', 'Task counts reflect OpenSpec checkboxes. They do not certify tests, review, or release readiness.');
     root.append(header, form, notice, metrics, columns, footer);
+    const automationPanel = el('div');
+    root.insertBefore(automationPanel, metrics);
+    disposeAutomation = mountAutomation({ host, container: automationPanel, navigate,
+      getWorkspace: () => snapshot?.workspace || '',
+      getChange: () => requested?.[1] || snapshot?.changes[0]?.name || '',
+    });
 
     function setBusy(value) {
       busy = value;

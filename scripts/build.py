@@ -95,6 +95,11 @@ def expected_files(root: Path) -> dict[Path, str]:
             "keep_alive": False,
             "tarball_source": {"type": "internal"},
         }
+        if stage == "explore":
+            automation["trigger"] = {
+                "type": "event", "source": "openspec-dashboard", "on": "explore.requested",
+                "filter": "schema == 'openspec-dashboard/v1' && stage == 'explore' && approval == 'explore'",
+            }
         expected[directory / "automation.yaml"] = json_text(automation)
         expected[directory / "tarball" / "run.py"] = runtime
         expected[directory / "tarball" / "config.json"] = json_text({**config, "stage": stage})

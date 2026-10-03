@@ -10,7 +10,7 @@ const defaultRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export async function validateApp(root = defaultRoot, { dist = false } = {}) {
   const manifest = JSON.parse(await readFile(path.join(root, "canvas-extension.json"), "utf8"));
   if (manifest.schema_version !== 1 || manifest.name !== "openspec-progress"
-      || manifest.version !== "0.1.0" || manifest.entrypoint !== "extension.js"
+      || manifest.version !== "0.2.0" || manifest.entrypoint !== "extension.js"
       || manifest.display_name !== "OpenSpec progress") {
     throw new Error("Unexpected OpenSpec progress App manifest metadata.");
   }

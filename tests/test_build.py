@@ -42,10 +42,16 @@ class BuildTests(unittest.TestCase):
             automation = json.loads((directory / "automation.yaml").read_text())
             self.assertEqual(automation["state"], "ACTIVE")
             self.assertTrue(automation["enabled"])
-            self.assertEqual(automation["trigger"], {
+            expected_trigger = {
                 "type": "event", "source": "openspec-manual", "on": "manual-only",
                 "filter": "`false`",
-            })
+            }
+            if stage == "explore":
+                expected_trigger = {
+                    "type": "event", "source": "openspec-dashboard", "on": "explore.requested",
+                    "filter": "schema == 'openspec-dashboard/v1' && stage == 'explore' && approval == 'explore'",
+                }
+            self.assertEqual(automation["trigger"], expected_trigger)
             self.assertEqual(automation["entrypoint"], "python3 run.py")
             self.assertEqual(automation["timeout"], 1800)
             self.assertEqual(automation["tarball_source"], {"type": "internal"})

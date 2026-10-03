@@ -4,9 +4,9 @@
   "enabled": true,
   "trigger": {
     "type": "event",
-    "source": "openspec-manual",
-    "on": "manual-only",
-    "filter": "`false`"
+    "source": "openspec-dashboard",
+    "on": "explore.requested",
+    "filter": "schema == 'openspec-dashboard/v1' && stage == 'explore' && approval == 'explore'"
   },
   "entrypoint": "python3 run.py",
   "timeout": 1800,

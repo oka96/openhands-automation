@@ -79,6 +79,17 @@
 .osp-root .osp-next p { color: var(--osp-muted); margin-top: 5px; }
 .osp-root .osp-empty { color: var(--osp-muted); padding: 18px 0; line-height: 1.7; }
 .osp-root .osp-footer { color: #929da7; font-size: 11px; margin-top: 24px; padding-top: 15px; border-top: 1px solid var(--osp-line); }
+.osp-root .osp-automation { border: 1px solid var(--osp-line); border-radius: 9px; margin: 4px 0 22px; background: var(--osp-bg); }
+.osp-root .osp-automation summary { cursor: pointer; padding: 15px 18px; font-weight: 550; }
+.osp-root .osp-automation summary:focus-visible { outline: 2px solid var(--osp-accent); outline-offset: 3px; }
+.osp-root .osp-automation-body { padding: 0 18px 18px; }
+.osp-root .osp-automation-connection { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 16px 0 8px; }
+.osp-root .osp-explore-form { display: grid; gap: 14px; padding-top: 16px; }
+.osp-root textarea { display: block; width: 100%; resize: vertical; border: 1px solid var(--osp-line); border-radius: 5px; padding: 10px; background: #14181c; color: var(--osp-text); font: inherit; font-size: 12px; }
+.osp-root textarea:focus-visible { outline: 2px solid var(--osp-accent); outline-offset: 3px; }
+.osp-root .osp-disclosure { font-size: 11px; color: var(--osp-muted); line-height: 1.6; }
+.osp-root .osp-automation-result { margin-top: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.osp-root .osp-run-link { display: inline-block; color: var(--osp-accent); margin-top: 8px; text-decoration: underline; }
 @media (max-width: 1050px) {
   .osp-root { padding: 24px 18px; }
   .osp-root .osp-columns { grid-template-columns: minmax(190px, .8fr) minmax(0, 1.4fr); gap: 16px; }

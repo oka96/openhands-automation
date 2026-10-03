@@ -1,16 +1,16 @@
 {
   "name": "@openhands-local/openspec-progress",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Read-only OpenSpec progress page for OpenHands Canvas",
+  "description": "OpenSpec progress and explicit Explore automation requests in OpenHands Canvas",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
     "validate": "node scripts/validate.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py' -v",
     "check": "npm run build && npm test && npm run validate"
   },
   "devDependencies": {

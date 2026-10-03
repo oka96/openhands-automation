@@ -99,7 +99,7 @@ async function eventually(condition, label = "expected state") {
   }
 }
 
-function mountApp(t, { route = "", kind = "local", request } = {}) {
+function mountApp(t, { route = "", kind = "local", request, automation } = {}) {
   const dom = new JSDOM("<!doctype html><main></main>", { url: "http://localhost/" });
   const saved = new Map();
   for (const key of ["window", "document", "HTMLElement", "Node", "Event", "CustomEvent", "localStorage"]) {
@@ -120,6 +120,12 @@ function mountApp(t, { route = "", kind = "local", request } = {}) {
     },
     agentServer: {
       async request(options) {
+        if (automation && (options.method === 'GET' || options.body?.command.startsWith('python3 '))) {
+          const encoded = options.body?.command.match(/'([A-Za-z0-9+/=]+)'$/)?.[1];
+          const input = encoded ? JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) : undefined;
+          requests.push({ ...options, input });
+          return automation(options, input);
+        }
         assert.equal(options.method, "POST");
         assert.equal(options.path, "/api/bash/execute_bash_command");
         assert.equal(options.body.timeout, 30);
@@ -149,7 +155,7 @@ function mountApp(t, { route = "", kind = "local", request } = {}) {
     get unregistered() { return unregistered; } };
 }
 
-test("the page reads the default project, renders evidence as text, and stays read only", async t => {
+test("the page reads progress safely without dispatching work on mount", async t => {
   const app = mountApp(t);
   await eventually(() => app.container.querySelectorAll(".osp-task").length === 2, "task list");
   assert.equal(app.container.querySelector("h1").textContent, "OpenSpec progress");
@@ -160,10 +166,116 @@ test("the page reads the default project, renders evidence as text, and stays re
   assert.match(app.container.textContent, /1 \/ 2 checked/);
   assert.match(app.container.textContent, /<img src=x onerror=globalThis.pwned=true>/);
   assert.equal(app.container.querySelectorAll("img, input[type=checkbox]").length, 0);
-  assert.deepEqual([...app.container.querySelectorAll("button")].map(item => item.textContent), ["Refresh", "Load project"]);
+  assert.deepEqual([...app.container.querySelectorAll("button")].map(item => item.textContent), ["Refresh", "Load project", "Connect Explore", "Run Explore", "Start another request"]);
+  assert.equal(app.container.querySelector('.osp-automation').open, false);
   assert.match(app.container.textContent, /do not certify tests, review, or release readiness/);
   app.container.querySelector(".osp-change").click();
   assert.deepEqual(app.navigations, [`/extensions/openspec-progress/progress/changes/${CHANGE}`]);
+});
+
+const AUTOMATION = { id: '9b24e837-4810-4c43-acbb-31c690980755', name: 'OpenSpec 01 · Explore' };
+const RUN_ID = 'ac739731-e649-4f7c-b242-1b877bab83e4';
+const SERVICE = { url_from_agent: 'http://localhost:18021', api_prefix: '/api/automation', auth_env_var: 'OPENHANDS_AUTOMATION_API_KEY' };
+
+function automationStub(actions, { ready = true, dispatch, advertised = true } = {}) {
+  return async (options, input) => {
+    if (options.path === '/server_info') return advertised ? { runtime_services: { services: { automation: SERVICE } } } : {};
+    if (options.path === '/api/file/home') return { home: '/Users/oka' };
+    assert.equal(options.path, '/api/bash/execute_bash_command');
+    assert.equal(options.body.cwd, '/Users/oka');
+    assert.deepEqual(input.service, SERVICE);
+    actions.push(input);
+    if (input.action === 'dispatch') return dispatch ? dispatch(input) : response({ version: 1, kind: 'dispatch',
+      automation_id: input.input.automation_id, request_id: input.input.request_id, run_id: RUN_ID });
+    return response({ version: 1, kind: input.action, automation: AUTOMATION,
+      ready: input.action === 'setup' || ready, message: 'Connect the existing automation.' });
+  };
+}
+
+async function openAutomation(app) {
+  await eventually(() => app.container.querySelectorAll('.osp-task').length === 2);
+  app.container.querySelector('.osp-automation').open = true;
+  await eventually(() => app.container.querySelector('.osp-automation-connection p').textContent.match(/Connected|Connect the|does not advertise/));
+}
+
+function submitExplore(app, params = '{"focus":"无障碍","limit":3}') {
+  app.container.querySelector('[aria-label="Requirement / prompt"]').value = 'Explore 标签; keep $(commands) and quotes \' as data.';
+  app.container.querySelector('[aria-label="Parameters (optional JSON object)"]').value = params;
+  app.container.querySelector('.osp-explore-form').dispatchEvent(new app.dom.window.Event('submit', { cancelable: true }));
+}
+
+test('Explore connects only on explicit action and sends Unicode inputs to the existing automation', async t => {
+  const actions = [];
+  const app = mountApp(t, { automation: automationStub(actions, { ready: false }) });
+  await openAutomation(app);
+  assert.deepEqual(actions.map(a => a.action), ['probe']);
+  app.container.querySelector('.osp-automation-connection button').click();
+  await eventually(() => !app.container.querySelector('.osp-explore-form button').disabled);
+  assert.deepEqual(actions.map(a => a.action), ['probe', 'setup']);
+  submitExplore(app);
+  await eventually(() => app.container.querySelector('.osp-run-link'));
+  const input = actions.at(-1).input;
+  assert.equal(input.automation_id, AUTOMATION.id);
+  assert.equal(input.workspace, WORKSPACE);
+  assert.equal(input.change, CHANGE);
+  assert.match(input.request, /标签.*\$\(commands\)/);
+  assert.deepEqual(input.parameters, { focus: '无障碍', limit: 3 });
+  assert.ok(actions.at(-1).home === '/Users/oka');
+  app.container.querySelector('.osp-run-link').click();
+  assert.equal(app.navigations.at(-1), `/automations/${AUTOMATION.id}?run=${RUN_ID}`);
+  const stored = app.dom.window.localStorage.getItem('openhands.apps.openspec-progress:test-local:last-explore');
+  assert.doesNotMatch(stored, /标签|focus|request"|secret/);
+  app.unmount();
+  app.render();
+  await openAutomation(app);
+  assert.match(app.container.querySelector('.osp-automation-result').textContent, /Explore was submitted/);
+  assert.equal(app.container.querySelector('.osp-explore-form button').disabled, true);
+  assert.equal(actions.filter(a => a.action === 'dispatch').length, 1);
+});
+
+test('invalid input cannot dispatch and duplicate submits or late results cannot recreate an unmounted page', async t => {
+  const actions = [];
+  let finish;
+  const app = mountApp(t, { automation: automationStub(actions, { dispatch: input => new Promise(resolve => {
+    finish = () => resolve(response({ version: 1, kind: 'dispatch', automation_id: AUTOMATION.id,
+      request_id: input.input.request_id, run_id: RUN_ID }));
+  }) }) });
+  await openAutomation(app);
+  for (const params of ['broken JSON', '[]', 'null']) {
+    submitExplore(app, params);
+    assert.equal(actions.filter(a => a.action === 'dispatch').length, 0);
+    assert.match(app.container.querySelector('.osp-automation-result').textContent, /Parameters must/);
+  }
+  submitExplore(app);
+  submitExplore(app);
+  await eventually(() => finish);
+  assert.equal(actions.filter(a => a.action === 'dispatch').length, 1);
+  app.unmount();
+  finish();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(app.container.children.length, 0);
+});
+
+test('uncertain dispatch requires history inspection and never retries on refresh', async t => {
+  const actions = [];
+  const app = mountApp(t, { automation: automationStub(actions, { dispatch: async () => { throw new Error('connection lost'); } }) });
+  await openAutomation(app);
+  submitExplore(app);
+  await eventually(() => app.container.querySelector('.osp-run-link'));
+  assert.match(app.container.querySelector('.osp-automation-result').textContent, /may already have started/);
+  app.unmount();
+  app.render();
+  await openAutomation(app);
+  submitExplore(app);
+  assert.equal(actions.filter(a => a.action === 'dispatch').length, 1);
+});
+
+test('unadvertised Automation service cannot execute a helper or guess an endpoint', async t => {
+  const actions = [];
+  const app = mountApp(t, { automation: automationStub(actions, { advertised: false }) });
+  await openAutomation(app);
+  assert.equal(actions.length, 0);
+  assert.equal(app.container.querySelector('.osp-explore-form button').disabled, true);
 });
 
 test("invalid project paths cannot send an Agent Server command", async t => {

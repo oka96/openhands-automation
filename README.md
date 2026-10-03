@@ -2,6 +2,7 @@
 
 Run each OpenSpec process from the OpenHands **Automate** page. Git Sync imports
 the definitions in this repository; a human selects **Run** for each stage.
+Explore also accepts a prompt and JSON parameters from the progress App.
 No separate website, new ADLC skill, or Codex desktop automation is required.
 
 These definitions target the existing local demo:
@@ -17,9 +18,11 @@ OpenHands manages dispatch, conversations, logs, and run status.
 
 ## Workflow and approval gates
 
-For a read-only view of active changes, artifacts, and task checklists, install
+For a view of active changes, artifacts, and task checklists, install
 the [OpenSpec progress App](apps/openspec-progress/README.md). It runs inside
-OpenHands and refreshes from the target project's OpenSpec CLI. Apps have a
+OpenHands and refreshes from the target project's OpenSpec CLI. Its explicit
+**Run Explore automation** panel submits requirements to the existing Explore
+automation without changing its shared configuration. Apps have a
 separate installation flow from Automation Git Sync.
 
 ```text
@@ -44,7 +47,7 @@ many steps internally, but its completion never dispatches another stage.
 | OpenSpec 07 · Archive | Archive completed, already synced work | Block on incomplete tasks, unsynced deltas, or failed checks |
 
 OpenHands requires a cron or event trigger, and Canvas 1.24.0 disables **Run** for
-inactive definitions. These definitions therefore stay active with the reserved
+inactive definitions. Stages 02–07 therefore stay active with the reserved
 event source `openspec-manual` and event `manual-only`. That source is deliberately
 not registered, there is no schedule, and a constant-false JMESPath filter rejects
 all automatic event matches. The runner also validates this trigger configuration
@@ -52,6 +55,13 @@ and rejects delivered event payloads, so only ordinary manual dispatch can start
 agent. Do not register
 a webhook for this source or replace its trigger with a schedule. Git Sync's
 refresh interval never authorizes the next OpenSpec stage.
+
+Explore uses the signed local `openspec-dashboard` event source and accepts only
+the `explore.requested` envelope. Each App submission creates one native run with
+its own change name, prompt, and parameters. The service labels these runs as event
+triggered; there is no schedule or automatic transition. The runner validates the
+stage and fixed workspace, and refuses replayed request IDs. Ordinary **Run** on
+the Explore automation still uses the bundled defaults.
 
 Selecting Apply is the human's approval of the configured change's current
 planning artifacts. Selecting Sync or Archive is a separate explicit approval of
@@ -61,7 +71,14 @@ on; a checked task box alone does not establish correctness.
 
 ## Choose the request
 
-Edit `workflow.json` before running work on a different change:
+For Explore, open the progress App, expand **Run Explore automation**, and connect
+it once after syncing these definitions. Enter a change name, prompt, and optional
+JSON object, then select **Run Explore**. Follow its run link for the conversation
+and result. Parameters are investigation context, not overrides for the workspace,
+profile, or stage. Later stages still require their own explicit approval.
+
+For shared defaults and stages 02–07, edit `workflow.json` before running work on a
+different change:
 
 ```json
 {
@@ -88,8 +105,9 @@ git push origin main
 
 Open the intended stage, confirm its configured change, and select **Run**.
 The ordinary Run endpoint in this OpenHands version does not accept a custom
-input payload or display a request form; every run uses the bundled configuration
-from the most recent successful Git Sync.
+input payload or display a request form; those ordinary runs use the bundled
+configuration from the most recent successful Git Sync. The App's parameterized
+Explore action uses the supported signed-event API instead of this endpoint.
 
 For a new change, set a new kebab-case name and a concrete request, then start at
 Explore or Propose. To revise an existing change, supply the revision request and
@@ -111,7 +129,7 @@ In the local OpenHands instance, open **Automate → Git Sync**:
 Save and sync, then verify that all seven named automations appear. An overall
 successful sync can still skip an invalid directory, so check the imported rows.
 For periodic configuration refresh, set a positive sync interval in that page;
-preserve the individual automations' reserved event triggers and manual-run guards.
+preserve the individual automations' generated triggers and runner guards.
 
 Git Sync is bidirectional: it pulls, imports, exports service-side edits, and
 pushes. It needs write access if OpenHands has changes to export. Use existing Git

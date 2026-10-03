@@ -249,6 +249,74 @@ class RunnerTests(unittest.TestCase):
         client.return_value.run.assert_called_once()
         self.assertEqual(callback.call_args.args[0]["status"], "completed")
 
+    def dashboard_event(self):
+        self.config["stage"] = "explore"
+        self.write_config()
+        event = {"schema": "openspec-dashboard/v1", "type": "explore.requested", "stage": "explore",
+                 "approval": "explore", "request_id": "e02ae0d2-d0ba-4561-b856-78b91588928c",
+                 "workspace": str(self.workspace), "change": "new-requirement",
+                 "request": "Explore 标签 and keyboard access", "parameters": {"focus": "accessibility", "limit": 3}}
+        payload = {"trigger": "event", "trigger_payload": {
+            "type": "event", "source": "openspec-dashboard", "on": "explore.requested",
+            "filter": "schema == 'openspec-dashboard/v1' && stage == 'explore' && approval == 'explore'"}, "event": event}
+        self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(payload)
+        return payload
+
+    def test_dashboard_inputs_reach_existing_runner_without_changing_shared_config(self):
+        self.dashboard_event()
+        before = self.config_path.read_bytes()
+        with mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback"), \
+                mock.patch.object(runner, "claim_dashboard_request") as claim:
+            client.return_value.run.return_value = SUCCESS
+            code, output = self.invoke()
+        self.assertEqual(code, 0)
+        claim.assert_called_once()
+        config, prompt = client.return_value.run.call_args.args
+        self.assertEqual(config["change"], "new-requirement")
+        self.assertEqual(config["parameters"], {"focus": "accessibility", "limit": 3})
+        self.assertEqual(config["profile"], "codex-acp-demo")
+        self.assertIn("new-requirement", prompt)
+        self.assertEqual(self.config_path.read_bytes(), before)
+
+    def test_dashboard_source_keeps_native_manual_run_defaults(self):
+        payload = self.dashboard_event()
+        del payload["event"]
+        self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(payload)
+        self.assertIsNone(runner.require_manual_trigger(self.env, runner.load_config(self.config_path)))
+
+    def test_dashboard_parameter_limit_uses_compact_json(self):
+        payload = self.dashboard_event()
+        payload["event"]["parameters"] = {"items": [0] * 3500}
+        self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(payload)
+        self.assertEqual(runner.require_manual_trigger(self.env, runner.load_config(self.config_path)), payload["event"])
+        for params in ({"items": [0] * 4500}, {"invalid": float("nan")}):
+            payload["event"]["parameters"] = params
+            self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(payload)
+            with self.assertRaises(runner.RunError):
+                runner.require_manual_trigger(self.env, runner.load_config(self.config_path))
+
+    def test_dashboard_cannot_override_stage_workspace_profile_or_replay(self):
+        valid = self.dashboard_event()
+        invalid = [
+            {**valid, "event": {**valid["event"], "stage": "apply"}},
+            {**valid, "event": {**valid["event"], "workspace": "/another"}},
+            {**valid, "event": {**valid["event"], "profile": "another"}},
+            {**valid, "event": {**valid["event"], "change": "../../etc"}},
+            {**valid, "event": {**valid["event"], "request_id": "../path"}},
+            {**valid, "event": {**valid["event"], "parameters": []}},
+        ]
+        for payload in invalid:
+            self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(payload)
+            with self.assertRaises(runner.RunError):
+                runner.require_manual_trigger(self.env, runner.load_config(self.config_path))
+        self.env["AUTOMATION_EVENT_PAYLOAD"] = json.dumps(valid)
+        with self.assertRaises(runner.RunError):
+            runner.require_manual_trigger(self.env, {**runner.load_config(self.config_path), "stage": "apply"})
+        consumed = self.root / "consumed"
+        runner.claim_dashboard_request(valid["event"], consumed)
+        with self.assertRaisesRegex(runner.RunError, "already consumed"):
+            runner.claim_dashboard_request(valid["event"], consumed)
+
     def test_missing_malformed_scheduled_and_delivered_events_cannot_start_agent(self):
         manual = json.loads(self.env["AUTOMATION_EVENT_PAYLOAD"])
         invalid = [None, "not-json", "[]", "{}", json.dumps({**manual, "trigger": "cron"}),

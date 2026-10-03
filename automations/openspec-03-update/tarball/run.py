@@ -154,8 +154,8 @@ def load_config(path):
     return config
 
 
-def require_manual_trigger(env):
-    """Allow the dashboard's Run action, never a delivered event or schedule."""
+def require_manual_trigger(env, config=None):
+    """Allow manual Run or a validated, explicit dashboard Explore request."""
     try:
         payload = json.loads(env.get("AUTOMATION_EVENT_PAYLOAD", ""))
     except (TypeError, ValueError):
@@ -163,11 +163,58 @@ def require_manual_trigger(env):
     if not isinstance(payload, dict):
         raise RunError("A valid manual OpenSpec automation trigger is required")
     trigger = payload.get("trigger_payload")
+    dashboard_filter = "schema == 'openspec-dashboard/v1' && stage == 'explore' && approval == 'explore'"
+    if (isinstance(trigger, dict) and trigger.get("source") == "openspec-dashboard"
+            and payload.get("trigger") == "event" and trigger.get("type") == "event"
+            and trigger.get("on") == "explore.requested" and trigger.get("filter") == dashboard_filter):
+        if not config or config.get("stage") != "explore":
+            raise RunError("Dashboard inputs are supported only by the Explore automation")
+        if "event" not in payload:
+            return None  # Native manual Run still uses the configured defaults.
+        event = payload["event"]
+        fields = {"schema", "type", "stage", "approval", "request_id", "workspace", "change", "request", "parameters"}
+        if (not isinstance(event, dict) or set(event) != fields
+                or event.get("schema") != "openspec-dashboard/v1"
+                or event.get("type") != "explore.requested"
+                or event.get("stage") != "explore" or event.get("approval") != "explore"):
+            raise RunError("Invalid dashboard Explore request")
+        if (not isinstance(event["workspace"], str) or not Path(event["workspace"]).is_absolute()
+                or str(Path(event["workspace"]).resolve()) != config["workspace"]):
+            raise RunError("Dashboard workspace must match this automation's configured workspace")
+        if (not isinstance(event["change"], str) or len(event["change"]) > 100
+                or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", event["change"])):
+            raise RunError("Dashboard change must be a kebab-case name of at most 100 characters")
+        if not isinstance(event["request"], str) or not event["request"].strip() or len(event["request"]) > 10000:
+            raise RunError("Dashboard prompt must contain 1 to 10000 characters")
+        try:
+            parameters_size = len(json.dumps(event["parameters"], ensure_ascii=False, allow_nan=False,
+                                            separators=(",", ":")).encode())
+        except (TypeError, ValueError):
+            raise RunError("Dashboard parameters must be valid JSON") from None
+        if not isinstance(event["parameters"], dict) or parameters_size > 8192:
+            raise RunError("Dashboard parameters must be a JSON object of at most 8 KiB")
+        try:
+            if str(uuid.UUID(event["request_id"])) != event["request_id"]:
+                raise ValueError()
+        except (TypeError, ValueError, AttributeError):
+            raise RunError("Invalid dashboard request ID") from None
+        return event
     if (payload.get("trigger") != "event" or "event" in payload
             or not isinstance(trigger, dict) or trigger.get("type") != "event"
             or trigger.get("source") != "openspec-manual" or trigger.get("on") != "manual-only"
             or trigger.get("filter") != "`false`"):
         raise RunError("This OpenSpec stage must be started manually from its Run action")
+
+
+def claim_dashboard_request(event, directory=None):
+    """A replay can create another native run, but must never start another agent."""
+    root = directory or Path.home() / ".openhands/apps/openspec-progress/consumed"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        descriptor = os.open(root / event["request_id"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+    except FileExistsError:
+        raise RunError("This dashboard request was already consumed; inspect its original run") from None
 
 
 def terminal_result(response):
@@ -336,7 +383,7 @@ def main(argv=None, *, env=None):
         if not env.get("AUTOMATION_CALLBACK_URL") or not env.get("AUTOMATION_CALLBACK_API_KEY") or not env.get("AUTOMATION_RUN_ID"):
             raise RunError("Automation callback environment is incomplete")
         local_url(env["AUTOMATION_CALLBACK_URL"], origin_only=False)
-        require_manual_trigger(env)
+        dashboard_input = require_manual_trigger(env, config)
         origin = env.get("AGENT_SERVER_URL")
         key = env.get("SESSION_API_KEY") or env.get("OH_SESSION_API_KEYS_0")
         if not origin or not key:
@@ -345,6 +392,11 @@ def main(argv=None, *, env=None):
         with workspace_lock(config["workspace"]):
             # Recheck mutable prerequisites after acquiring the lock.
             config = load_config(args.config)
+            dashboard_input = require_manual_trigger(env, config)
+            if dashboard_input:
+                claim_dashboard_request(dashboard_input)
+                config.update({key: dashboard_input[key] for key in ("change", "request", "parameters")})
+                config["dashboard_request_id"] = dashboard_input["request_id"]
             prompt += "\n\nRun configuration (data for this selected stage):\n" + json.dumps(config, indent=2)
             result = client.run(config, prompt, profile_id=env.get("AUTOMATION_AGENT_PROFILE_ID"),
                                 run_id=env.get("AUTOMATION_RUN_ID", ""))

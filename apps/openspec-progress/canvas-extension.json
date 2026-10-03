@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "openspec-progress",
   "display_name": "OpenSpec progress",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "entrypoint": "extension.js",
   "contributes": {
     "pages": [
@@ -11,7 +11,7 @@
         "title": "OpenSpec progress",
         "path": "/progress",
         "nav_label": "OpenSpec progress",
-        "description": "Read-only artifact and task progress from OpenSpec."
+        "description": "OpenSpec progress and explicit Explore automation requests."
       }
     ]
   }
