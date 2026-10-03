@@ -702,8 +702,7 @@ class Client:
             profile_id = matches[0]["id"]
         settings = self.request("/api/settings", deadline=deadline)
         options = conversation_options(settings.get("conversation_settings", {}))
-        tags = {"openspecstage": config["stage"], "openspecskill": STAGES[config["stage"]],
-                "openspecchange": config["change"], "automationrunid": run_id,
+        tags = {"openspecstage": config["stage"], "automationrunid": run_id,
                 "automationtrigger": "automation"}
         role_run = config.get("mode") == "role"
         if role_run:
@@ -728,7 +727,7 @@ class Client:
             if role_run:
                 # Creation runs any initial message; send it only after naming succeeds.
                 named = self.request(path, method="PATCH", deadline=deadline,
-                                     body={"title": f"[{config['role']}] {config['spec_id']}"})
+                                     body={"title": config["spec_id"]})
                 if named.get("success") is not True:
                     raise RunError("OpenHands could not save the role conversation title")
                 started = self.request(path + "/events", method="POST", deadline=deadline, body=message)

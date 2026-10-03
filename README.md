@@ -60,18 +60,18 @@ action, then submit a role action from a requirement. A role automation's ordina
 zero-input **Run** is intentionally rejected because it lacks a role and request
 context. Setup, refresh, and status checks never start an agent.
 
-New role conversations carry native tags for `requirement` (for example,
+New role conversations carry exactly six native tags: `requirement` (for example,
 `REQ-006`), `role` (`SA`, `Frontend`, `Backend`, or `QA`), `openspecstage` (such as
-`apply`) and `openspecskill` (such as `openspec-apply-change`). These are set when
-the conversation is created, alongside its existing change and automation run
-tags. `openspecspec` identifies the selected canonical spec ID. `requirement`
-and `openspecchange` identify its existing requirement and shared change container
-for all actions, including Propose. Existing conversations retain their tags.
+`apply`), `openspecspec` (the canonical spec ID), `automationrunid`, and
+`automationtrigger`. Future role and legacy runs omit `openspecchange` and
+`openspecskill`; legacy runs retain their stage and automation origin tags.
 
-New conversation names use `[Role] <spec ID>`, for example
-`[SA] SA-REQ-002-date-validation` or `[Backend] BE-REQ-002-date-validation`.
+New conversation names use the plain spec ID, for example
+`SA-REQ-002-date-validation` or `BE-REQ-002-date-validation`.
 The runner saves the title before starting the queued agent message and disables
-automatic title generation. Existing conversation names remain unchanged.
+automatic title generation. Existing conversation metadata can be normalized
+through the native API by removing a leading bracketed role prefix and only the
+two obsolete tag keys, preserving other tags, messages, and run history.
 
 Use one local OpenHands launcher for the shared automation database. Multiple
 launchers on different ports can share the SQLite queue while keeping packages

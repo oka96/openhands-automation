@@ -190,10 +190,8 @@ class RunnerTests(unittest.TestCase):
         body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
         self.assertEqual(body["agent_profile_id"], "selected-profile")
 
-    def test_role_conversations_name_target_before_execution_and_preserve_origin_tags_for_every_role_and_skill(self):
-        skills = {"propose": "openspec-propose", "update": "openspec-update-change",
-                  "apply": "openspec-apply-change"}
-        for stage, skill in skills.items():
+    def test_role_conversations_use_plain_spec_title_before_execution_and_reduced_tags_for_every_role_and_stage(self):
+        for stage in ("propose", "update", "apply"):
             for role in ("SA", "Frontend", "Backend", "QA"):
                 with self.subTest(stage=stage, role=role):
                     server = FakeServer()
@@ -209,13 +207,13 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual([call["method"] for _, call in mutations], ["POST", "PATCH", "POST"])
                     conversation_path = "/api/conversations/" + body["conversation_id"]
                     self.assertEqual(mutations[1][0], conversation_path)
-                    self.assertEqual(mutations[1][1]["body"], {"title": f"[{role}] {config['spec_id']}"})
+                    self.assertEqual(mutations[1][1]["body"], {"title": config["spec_id"]})
                     self.assertEqual(mutations[2][0], conversation_path + "/events")
                     self.assertEqual(mutations[2][1]["body"], {
                         "role": "user", "content": [{"type": "text", "text": "role prompt"}], "run": True})
                     self.assertEqual(body["tags"], {
                         "requirement": "REQ-006", "role": role, "openspecstage": stage,
-                        "openspecskill": skill, "openspecchange": config["change"], "openspecspec": config["spec_id"],
+                        "openspecspec": config["spec_id"],
                         "automationrunid": "role-run-id", "automationtrigger": "automation"})
 
     def test_role_naming_failure_never_starts_agent(self):
@@ -240,19 +238,15 @@ class RunnerTests(unittest.TestCase):
                 self.assertIsNone(created['initial_message'])
                 self.assertTrue(server.calls[-1][0].endswith("/pause"))
 
-    def test_legacy_conversations_tag_exact_skill_without_inventing_role_or_requirement(self):
-        skills = {"explore": "openspec-explore", "propose": "openspec-propose",
-                  "update": "openspec-update-change", "apply": "openspec-apply-change",
-                  "verify": "openspec-apply-change", "sync": "openspec-sync-specs",
-                  "archive": "openspec-archive-change"}
-        for stage, skill in skills.items():
+    def test_legacy_conversations_omit_obsolete_tags_and_preserve_stage_and_origin(self):
+        for stage in ("explore", "propose", "update", "apply", "verify", "sync", "archive"):
             with self.subTest(stage=stage):
                 server = FakeServer()
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.client(server).run({**self.config, "stage": stage}, "stage prompt", run_id="legacy-run-id")
                 body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
                 self.assertEqual(body["tags"], {
-                    "openspecstage": stage, "openspecskill": skill, "openspecchange": "example-change",
+                    "openspecstage": stage,
                     "automationrunid": "legacy-run-id", "automationtrigger": "automation"})
 
     def test_idle_does_not_count_as_finished_and_timeout_pauses(self):
