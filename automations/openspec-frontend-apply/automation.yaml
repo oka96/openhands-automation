@@ -6,7 +6,7 @@
     "type": "event",
     "source": "openspec-role-dashboard",
     "on": "apply.requested",
-    "filter": "schema == 'openspec-role-dashboard/v1' && stage == 'apply' && approval == 'apply' && role == 'Frontend'"
+    "filter": "schema == 'openspec-role-dashboard/v2' && stage == 'apply' && approval == 'apply' && role == 'Frontend'"
   },
   "entrypoint": "python3 run.py",
   "timeout": 1800,

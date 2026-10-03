@@ -2,7 +2,7 @@
 
 Run **Propose**, **Update**, or **Apply** for SA, Frontend, Backend, or QA from the
 requirement board in `/Users/oka/Desktop/openhands-apps`. Select a requirement,
-role, and action, enter one prompt, and submit. OpenHands starts one native
+role, spec, and action, enter one prompt, and submit. OpenHands starts one native
 automation run with a linked conversation and visible result. Definitions and
 runtime code live here; the App dispatches them through a signed local event.
 
@@ -14,12 +14,12 @@ The seven legacy stage definitions and three generic role definitions are retire
 
 | Action | User input | Result and boundary |
 | --- | --- | --- |
-| OpenSpec <role> · Propose | Role, new change name, prompt; current requirement provides context | New planning artifacts and requirement record with all four roles; no implementation |
-| OpenSpec <role> · Update | Role and revision prompt | Revise the current requirement's planning coherently; no implementation |
-| OpenSpec <role> · Apply | Role and optional guidance prompt | Implement and verify only that role's tagged tasks; leave other roles unchanged |
+| OpenSpec <role> · Propose | Role, new feature slug, prompt | Add one named spec and task file to the selected requirement; no implementation |
+| OpenSpec <role> · Update | Role, existing spec and revision prompt | Revise only that spec and its task planning; no implementation |
+| OpenSpec <role> · Apply | Role, existing spec and optional guidance prompt | Implement and verify only that spec’s tasks; preserve siblings |
 
 Submitting Update explicitly approves artifact edits needed for the stated
-revision. Submitting Apply authorizes implementation of that role's current
+revision within the selected spec. Submitting Apply authorizes implementation of that spec's current
 planned tasks. Unanswered material questions and changes outside that scope stop
 the run. Completion never launches another action. Done on the board still
 requires SA, Frontend, Backend, and QA to finish.
@@ -28,8 +28,11 @@ Examples: SA → Propose → `Plan task attachments with size limits and clear f
 states`; Frontend → Update → `Clarify keyboard focus after a failed save`;
 Backend → Apply → `Follow the existing built-in HTTP conventions`; QA → Apply →
 `Verify keyboard and failed-request scenarios`. Any of the four roles can submit
-any of the three actions. Propose plans nonempty tasks for every role even when
-its selected perspective is QA or Backend.
+any of the three actions. Each requirement can contain several specs per role.
+Propose uses a feature slug such as `date-validation` to derive a canonical ID:
+`SA-REQ-002-date-validation`, `FE-REQ-002-date-validation`,
+`BE-REQ-002-date-validation`, or `QA-REQ-002-date-validation`. It creates tasks only
+for the selected role. At most 20 specs can be registered per requirement.
 
 The fixed deployment configuration is `role-workflow.json`:
 
@@ -61,13 +64,12 @@ New role conversations carry native tags for `requirement` (for example,
 `REQ-006`), `role` (`SA`, `Frontend`, `Backend`, or `QA`), `openspecstage` (such as
 `apply`) and `openspecskill` (such as `openspec-apply-change`). These are set when
 the conversation is created, alongside its existing change and automation run
-tags. For Propose, `requirement` identifies the selected context requirement and
-`openspecchange` identifies the new target change. Existing conversations retain
-their original tags and remain available after definition retirement.
+tags. `openspecspec` identifies the selected canonical spec ID. `requirement`
+and `openspecchange` identify its existing requirement and shared change container
+for all actions, including Propose. Existing conversations retain their tags.
 
-New conversation names use `[Role] <OpenSpec change name>`, for example
-`[SA] add-task-quick-capture` or `[Backend] add-task-attachments`. Propose uses
-the new target change; Update and Apply use the selected requirement's change.
+New conversation names use `[Role] <spec ID>`, for example
+`[SA] SA-REQ-002-date-validation` or `[Backend] BE-REQ-002-date-validation`.
 The runner saves the title before starting the queued agent message and disables
 automatic title generation. Existing conversation names remain unchanged.
 
@@ -76,16 +78,21 @@ launchers on different ports can share the SQLite queue while keeping packages
 in different storage directories; a competing dispatcher can then fail with a
 missing tarball. Browser and desktop clients should connect to the same backend.
 
-Successful Propose registers a stable new `REQ-NNN` ID, derived from the highest
-existing ID while holding the store lock. Its title/summary come from the prompt,
-owners start Unassigned, and every role starts in Backlog with unchecked tasks.
-If planning is blocked, no record is registered; inspect any partial artifacts
-before deciding how to recover. Update and Apply do not rewrite board metadata.
+Successful Propose registers only the new spec in the selected role's `specs`
+array in metadata v2, while holding both locks. Its title comes from the feature
+slug and it starts in Backlog with unchecked tasks. It does not create another
+REQ. The requirement's existing lowercase change uses the local `role-specs`
+schema: shared `proposal.md` and `design.md` are read-only context, each spec is
+`specs/<spec ID>/spec.md`, and its tasks are `tasks/<spec ID>.md`.
+
+If planning is blocked, no spec is registered; inspect any partial artifacts
+before deciding how to recover. Update and Apply do not rewrite metadata.
+Legacy metadata v1 is read-only in Kanban and cannot dispatch role actions.
 
 Role requests use source `openspec-role-dashboard`, schema
-`openspec-role-dashboard/v1`, and event type `<stage>.requested`. The exact event
+`openspec-role-dashboard/v2`, and event type `<stage>.requested`. The exact event
 fields are `schema`, `type`, `stage`, `approval`, `request_id`, `spec_store`,
-`requirement_id`, `context_change`, `role`, `change`, and `request`. Prompt text
+`requirement_id`, `context_change`, `role`, `spec_id`, `change`, and `request`. Prompt text
 cannot override configured workspace, store, skill root, profile, or timeout.
 OpenHands delivers custom webhooks as an exact three-field wrapper:
 `{"payload": <signed request>, "source_override": "openspec-role-dashboard",
@@ -93,14 +100,17 @@ OpenHands delivers custom webhooks as an exact three-field wrapper:
 before unwrapping the request; raw request delivery remains supported. Unknown
 wrapper fields, wrong sources, and mismatched event keys are rejected.
 Propose and Update require a prompt of at most 10,000 characters; Apply may omit
-guidance. The current requirement/change association must match store metadata.
+guidance. Both change fields must identify the existing requirement change. The selected
+requirement/role/spec association must match current metadata. Propose instead
+requires an unused canonical spec ID and absent target files.
 
 The runner checks the envelope before mutable preflight, locks both store and
 workspace, and consumes each request UUID at most once. It preserves saved
 conversation confirmation/security settings and sends normal lifecycle callbacks.
 After the agent finishes, it audits file scope and validates the change using
-OpenSpec. Propose and Update must leave implementation files unchanged. Apply may
-only change its role's task checkboxes in the store and must supply concrete
+OpenSpec. Propose and Update may edit only the selected spec document and task file; shared
+planning, sibling artifacts and implementation files must remain unchanged. Apply may
+only change its selected spec's task checkboxes in the store and must supply concrete
 verification evidence for newly checked tasks. An invalid scope change produces
 a failed run and keeps files available for inspection; it does not silently undo
 user work. These audits and prompts are workflow controls, not an OS sandbox.
@@ -115,7 +125,7 @@ These definitions target the existing local demo:
 - Workspace: `/Users/oka/Desktop/openhands-demo`
 - OpenHands Canvas: `http://127.0.0.1:8000`
 - Saved agent profile: `codex-acp-demo`
-- Initial change: `add-task-completion`
+- Spec store: `/Users/oka/Desktop/openspec-store`
 
 The automation runner uses OpenHands Agent Server to start a conversation with
 that saved profile. With the current profile, Codex ACP performs the agent work;
@@ -133,7 +143,9 @@ npm run check
 
 The generator emits exactly twelve bundles and refuses unexpected definitions in
 `automations/`. Reconnect from the board after rebuilding. Setup updates existing
-pair IDs, preserves the signing source, and never starts a conversation.
+pair IDs and v2 event filters, preserves the signing source, and never starts a
+conversation. Reconnect after migrating a store and upgrading these bundles;
+obsolete v1 events are rejected.
 
 ## Migration from the legacy definitions
 

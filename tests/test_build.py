@@ -37,7 +37,7 @@ class BuildTests(unittest.TestCase):
                     self.assertEqual(metadata["name"], f"OpenSpec {role} · {stage.title()}")
                     self.assertEqual(metadata["trigger"], {
                         "type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                        "filter": f"schema == 'openspec-role-dashboard/v1' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"})
+                        "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"})
                     self.assertEqual(json.loads((directory / "tarball/config.json").read_text()),
                                      {**self.role_config, "mode": "role", "stage": stage, "role": role})
                     self.assertEqual((directory / "tarball/prompt.md").read_text(), f"Role boundaries.\n\nRole {stage}.\n")

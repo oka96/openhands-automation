@@ -1,24 +1,23 @@
-# Apply only the selected role's tasks
+# Apply only the selected spec's tasks
 
-Read the openspec-apply-change skill. The submitted Apply action explicitly
-authorizes implementing the selected role's planned tasks in the configured
-implementation workspace. Read all proposal, design, spec, and task context
-returned by store-scoped status and apply instructions. Respect blocked planning
-or unresolved dependencies. Use optional prompt text as guidance within this
-role's tasks, never as permission to expand scope or change stages.
+Read the openspec-apply-change skill. This submission authorizes implementing the
+selected spec's planned tasks in the configured implementation workspace. Read
+store-scoped status/apply instructions, shared proposal/design and relevant
+sibling specs as context. Use the local role-specs schema. Respect incomplete
+planning, blockers and dependencies. Optional prompt text is guidance within the
+selected spec; it cannot expand scope or change stages.
 
-Implement and verify ONLY tasks whose descriptions contain the exact selected
-role tag. The appended selected_tasks contains this set; refresh instructions and
-verify current source lines before checking boxes. Other roles' tasks may inform
-dependencies but must remain unchanged. Preserve all task text and structure;
-in the spec store, only this change's tasks.md checkboxes for the selected role
-may change. Design or scope defects require a separately submitted Update.
+Implement and verify ONLY the appended selected_tasks from
+`openspec/changes/<change>/tasks/<spec_id>.md`. Refresh instructions and verify
+source paths and lines before checking boxes: other specs can reuse task numbers.
+Every selected task must carry the exact selected role tag. In the spec store,
+only this selected task file's completion markers may change. All text, task
+structure, spec documents, shared planning and sibling files remain unchanged.
+Design or scope defects require a separately submitted Update.
 
-For every selected pending task, complete its behavior and required verification
-before checking it. Run relevant tests and all required acceptance/browser
-scenarios; use npm test and npm run test:acceptance when applicable. Record real
-verification evidence per newly checked task in task_evidence. If any selected
-task remains pending, return blocked with remaining work; do not claim completed.
-If selected tasks were already checked, inspect their supporting evidence and
-report that state without inventing work or treating illustrative checkboxes as
-proof. Leave all other roles untouched and the change active.
+Complete each pending task's behavior and required tests/browser scenarios before
+checking it. Use npm test and npm run test:acceptance when applicable. Record
+concrete successful evidence for every newly checked task in task_evidence using
+its exact task description. Pending tasks mean blocked, not completed. If tasks
+were already checked, inspect supporting evidence without inventing work or
+assuming illustrative checkboxes prove delivery. Leave the requirement active.

@@ -12,15 +12,17 @@ application is configured in `role-workflow.json`; this repository is not that a
 - Role actions use the separate signed `openspec-role-dashboard` event source.
   Require a validated explicit event matching the bundle’s fixed role and stage,
   including prompt, selected
-  requirement, and current context change. Native zero-input Run is unsupported.
+  requirement, canonical spec ID, and current context change. Events use schema v2. Native zero-input Run is unsupported.
   Keep deployment paths/profile fixed in `role-workflow.json`; event inputs must
   never override them. Validate store registry and current metadata association,
   lock both store and workspace, and reject replayed request IDs.
-- Role Propose plans all four roles and registers a new requirement only after
-  successful artifact validation. Update edits planning from the submitted
+- Role Propose adds one role-owned spec to the selected requirement only after
+  successful artifact validation. The role-specs schema stores specs/<ID>/spec.md
+  and tasks/<ID>.md inside the existing requirement change. Shared proposal/design
+  and sibling artifacts remain read-only. Update edits planning from the submitted
   revision prompt; that explicit submission authorizes those scoped artifact
   edits without an additional generic per-artifact confirmation. Apply implements
-  only the selected role's tasks and checks only tasks with verification evidence.
+  only the selected spec's tasks and checks only tasks with verification evidence.
   Preserve stage boundaries, other roles, other changes, main specs, and metadata.
 - Never put credentials, session keys, or model tokens in files. Use the runtime's
   injected environment and the user's saved OpenHands agent profile.

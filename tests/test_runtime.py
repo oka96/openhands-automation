@@ -199,7 +199,7 @@ class RunnerTests(unittest.TestCase):
                     server = FakeServer()
                     config = {**self.config, "mode": "role", "stage": stage, "role": role,
                               "requirement_id": "REQ-006", "context_change": "context-change",
-                              "change": "new-proposal" if stage == "propose" else "context-change"}
+                              "change": "context-change", "spec_id": f"{runner.ROLE_PREFIXES[role]}-REQ-006-feature"}
                     with contextlib.redirect_stdout(io.StringIO()):
                         self.client(server).run(config, "role prompt", run_id="role-run-id")
                     body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
@@ -209,13 +209,13 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual([call["method"] for _, call in mutations], ["POST", "PATCH", "POST"])
                     conversation_path = "/api/conversations/" + body["conversation_id"]
                     self.assertEqual(mutations[1][0], conversation_path)
-                    self.assertEqual(mutations[1][1]["body"], {"title": f"[{role}] {config['change']}"})
+                    self.assertEqual(mutations[1][1]["body"], {"title": f"[{role}] {config['spec_id']}"})
                     self.assertEqual(mutations[2][0], conversation_path + "/events")
                     self.assertEqual(mutations[2][1]["body"], {
                         "role": "user", "content": [{"type": "text", "text": "role prompt"}], "run": True})
                     self.assertEqual(body["tags"], {
                         "requirement": "REQ-006", "role": role, "openspecstage": stage,
-                        "openspecskill": skill, "openspecchange": config["change"],
+                        "openspecskill": skill, "openspecchange": config["change"], "openspecspec": config["spec_id"],
                         "automationrunid": "role-run-id", "automationtrigger": "automation"})
 
     def test_role_naming_failure_never_starts_agent(self):
@@ -232,7 +232,7 @@ class RunnerTests(unittest.TestCase):
                     return request(url, **kwargs)
                 client = runner.Client("http://127.0.0.1:18000", "secret", requester=failing_title,
                                        clock=lambda: server.now, sleep=server.sleep)
-                config = {**self.config, "mode": "role", "role": "SA", "requirement_id": "REQ-006"}
+                config = {**self.config, "mode": "role", "role": "SA", "requirement_id": "REQ-006", "spec_id": "SA-REQ-006-feature"}
                 with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(runner.RunError):
                     client.run(config, "role prompt")
                 self.assertFalse(any(path.endswith("/events") or path.endswith("/run") for path, _ in server.calls))
@@ -267,7 +267,7 @@ class RunnerTests(unittest.TestCase):
         server = FakeServer(["running"] * 40)
         server.now = 15
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(runner.RunError, "timed out"):
-            self.client(server).run({**self.config, "mode": "role", "requirement_id": "REQ-006", "role": "SA"},
+            self.client(server).run({**self.config, "mode": "role", "requirement_id": "REQ-006", "role": "SA", "spec_id": "SA-REQ-006-feature"},
                                     "role prompt", deadline=60)
         self.assertEqual(server.now, 30)
         self.assertTrue(server.calls[-1][0].endswith("/pause"))

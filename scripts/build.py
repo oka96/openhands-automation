@@ -75,7 +75,7 @@ def expected_files(root: Path) -> dict[Path, str]:
         expected[directory / "automation.yaml"] = json_text({
             "name": f"OpenSpec {role} · {stage.title()}", "state": "ACTIVE", "enabled": True,
             "trigger": {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                        "filter": f"schema == 'openspec-role-dashboard/v1' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"},
+                        "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"},
             "entrypoint": "python3 run.py", "timeout": role_config["timeout_seconds"],
             "keep_alive": False, "tarball_source": {"type": "internal"},
         })
