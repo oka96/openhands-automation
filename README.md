@@ -34,7 +34,12 @@ Propose uses a feature slug such as `date-validation` to derive a canonical ID:
 `BE-REQ-002-date-validation`, or `QA-REQ-002-date-validation`. It creates tasks only
 for the selected role. At most 20 specs can be registered per requirement.
 
-The fixed deployment configuration is `role-workflow.json`:
+The fixed deployment configuration is `role-workflow.json`. Kanban displays its
+effective Role, mapped OpenSpec skill, saved agent profile, implementation project,
+spec store, skill source and timeout. Reconnect after editing configuration or
+rebuilding bundles. Each native bundle's `prompt.md` also explains its launch
+path and fixed profile; the native profile selector does not override these
+role runners.
 
 ```json
 {
@@ -49,7 +54,7 @@ The fixed deployment configuration is `role-workflow.json`:
 ```
 
 The workspace receives implementation changes; the registered store owns the
-planning artifacts and `openspec/requirements.json`. Existing project-local
+planning artifacts in independently scoped role change folders. Existing project-local
 OpenSpec skills are read from `skill_root`; no replacement skills are installed.
 The runner uses the pinned `npx --no-install openspec` CLI with an explicit
 `--store openspec-store` for all change operations. A missing or mismatched store
@@ -59,6 +64,30 @@ Install/connect the twelve dedicated role automations from the board's automatio
 action, then submit a role action from a requirement. A role automation's ordinary
 zero-input **Run** is intentionally rejected because it lacks a role and request
 context. Setup, refresh, and status checks never start an agent.
+
+### Results and task corrections
+
+Kanban shows business outcomes independently from native lifecycle: Completed,
+Waiting for dependency, Blocked (action needed), Needs review, or Execution error.
+Agents report `blocker_type: "dependency"` or `"input"` for a blocked result and
+a concrete `next_action`. Findings and confirmation pauses require review;
+transport, malformed results and audit errors are execution errors. Native
+callbacks still use the supported COMPLETED/FAILED values.
+
+Apply may reopen an originally checked selected task only when `task_corrections`
+contains its exact description and a nonempty `reason`. This corrects unsupported
+illustrative completion without changing task text, structure or siblings. Newly
+completed tasks still require `task_evidence`; pending corrected tasks prevent
+completion. Postflight errors preserve the original agent result alongside
+specific `audit_errors` rather than replacing its blocker with a generic message.
+
+The runner atomically records a bounded, credential-redacted result in
+`~/.openhands/apps/openspec-progress/role-results/<run UUID>.json` before its
+completion callback. The bridge checks its run/conversation/role/store bindings
+and exposes only validated display fields and the run's captured configuration.
+Native lifecycle remains authoritative. Older runs, unavailable reports and
+inconsistent records retain native status with a link to the original history;
+existing histories are not rewritten. Full agent diagnostics remain in run logs.
 
 New role conversations carry exactly six native tags: `requirement` (for example,
 `REQ-006`), `role` (`SA`, `Frontend`, `Backend`, or `QA`), `openspecstage` (such as
@@ -78,19 +107,32 @@ launchers on different ports can share the SQLite queue while keeping packages
 in different storage directories; a competing dispatcher can then fail with a
 missing tarball. Browser and desktop clients should connect to the same backend.
 
-Successful Propose registers only the new spec in the selected role's `specs`
-array in metadata v2, while holding both locks. Its title comes from the feature
-slug and it starts in Backlog with unchecked tasks. It does not create another
-REQ. The requirement's existing lowercase change uses the local `role-specs`
-schema: shared `proposal.md` and `design.md` are read-only context, each spec is
-`specs/<spec ID>/spec.md`, and its tasks are `tasks/<spec ID>.md`.
+Requirements are compiled directly from `openspec/changes/` directory names:
+`<SA|FE|BE|QA>-<PREFIX>-<digits>-<feature>`, for example
+`FE-REQ-003-filters` or `BE-STORY-12-api`. Prefixes contain uppercase letters and
+digits, start with a letter, and have no hyphens; feature names are lowercase
+kebab-case. The exact prefix and digits identify the requirement, preserving
+leading zeroes. A canonical folder name is at most 160 characters. The store
+supports 50 requirements, 20 role changes per requirement and 500 tasks per group.
+Archive and unrelated OpenSpec changes are excluded. No requirement registry is
+read or written, including `requirements.json`.
 
-If planning is blocked, no spec is registered; inspect any partial artifacts
-before deciding how to recover. Update and Apply do not rewrite metadata.
-Legacy metadata v1 is read-only in Kanban and cannot dispatch role actions.
+Each role change uses standard `spec-driven` artifacts: `.openspec.yaml`,
+`proposal.md`, `design.md`, `specs/<capability>/spec.md` and `tasks.md`.
+Propose safely creates the new exact folder and schema file while holding both
+locks; the agent supplies its planning artifacts with unchecked tasks. This
+avoids the pinned CLI's lowercase-only `new change` restriction. Existing-folder
+CLI operations support the canonical uppercase names. Refresh discovers the
+result directly. Partial planning remains visible and an explicit Update can
+repair it. Sibling changes provide read-only requirement context.
+
+Optional `## Kanban` bullets in proposal.md can supply Requirement title,
+Requirement summary, Spec title, Owner, Role note, State and Note. These display
+fields never determine identity or completion. Untagged tasks inherit the folder
+role; explicit task role tags must match it.
 
 Role requests use source `openspec-role-dashboard`, schema
-`openspec-role-dashboard/v2`, and event type `<stage>.requested`. The exact event
+`openspec-role-dashboard/v3`, and event type `<stage>.requested`. The exact event
 fields are `schema`, `type`, `stage`, `approval`, `request_id`, `spec_store`,
 `requirement_id`, `context_change`, `role`, `spec_id`, `change`, and `request`. Prompt text
 cannot override configured workspace, store, skill root, profile, or timeout.
@@ -100,17 +142,19 @@ OpenHands delivers custom webhooks as an exact three-field wrapper:
 before unwrapping the request; raw request delivery remains supported. Unknown
 wrapper fields, wrong sources, and mismatched event keys are rejected.
 Propose and Update require a prompt of at most 10,000 characters; Apply may omit
-guidance. Both change fields must identify the existing requirement change. The selected
-requirement/role/spec association must match current metadata. Propose instead
-requires an unused canonical spec ID and absent target files.
+guidance. `change` always equals the canonical `spec_id`. Update and Apply also
+require `context_change` to equal that existing folder. Propose requires an unused
+target and an existing context change from the same requirement (any role).
+Current folders are rechecked before dispatch; old v2 events are rejected.
 
 The runner checks the envelope before mutable preflight, locks both store and
 workspace, and consumes each request UUID at most once. It preserves saved
 conversation confirmation/security settings and sends normal lifecycle callbacks.
 After the agent finishes, it audits file scope and validates the change using
-OpenSpec. Propose and Update may edit only the selected spec document and task file; shared
-planning, sibling artifacts and implementation files must remain unchanged. Apply may
-only change its selected spec's task checkboxes in the store and must supply concrete
+OpenSpec. Propose and Update may edit only the selected change's proposal, design,
+capability specs and tasks; schema configuration, sibling changes, main specs and
+implementation files must remain unchanged. Apply may only change its selected
+change's task checkboxes in the store and must supply concrete
 verification evidence for newly checked tasks. An invalid scope change produces
 a failed run and keeps files available for inspection; it does not silently undo
 user work. These audits and prompts are workflow controls, not an OS sandbox.

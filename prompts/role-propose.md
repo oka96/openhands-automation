@@ -1,20 +1,26 @@
-# Propose one role-owned spec
+# Propose one role-owned change
 
-Read the openspec-propose skill for artifact guidance. This action adds a spec to
-an EXISTING requirement change using the local `role-specs` schema; do not create
-a new change, replace shared planning, or allocate a new requirement. Read the
-requirement's proposal.md, design.md and relevant sibling specs as read-only
-context. Read status and schema instructions with --store <store_id>.
+Read the openspec-propose skill for artifact guidance. The runner has already
+created exactly `openspec/changes/<change>/` and its `.openspec.yaml` with the
+standard spec-driven schema. The supplied change equals spec_id and determines
+the requirement and role. Do not run `openspec new change`: the pinned command
+rejects uppercase creation names although other commands support these folders.
 
-Create exactly `openspec/changes/<change>/specs/<spec_id>/spec.md` and
-`openspec/changes/<change>/tasks/<spec_id>.md` in the configured store. The supplied
-canonical spec_id is authoritative. Draft requirement scenarios for the selected
-role and feature from the prompt. Use OpenSpec delta spec requirements/scenarios
-and nonempty tasks tagged only with the exact selected role, for example
-[Frontend]. Every task starts unchecked; planning is not delivery evidence.
+Read the existing context_change and relevant related_changes as read-only
+requirement context. Run status and schema instructions for the NEW selected
+change with --store <store_id>. Create its own proposal.md, design.md,
+specs/<spec_id>/spec.md and tasks.md. Use the submitted prompt to draft observable
+requirements and scenarios, plus nonempty, initially unchecked tasks. Tasks
+inherit the folder's role; any explicit role tag must match it (for example,
+[Frontend]). Do not create requirements.json or register the folder elsewhere.
 
-Do not edit shared proposal/design, sibling specs/tasks, application code, main
-specs, or requirements.json. Validate the existing change strictly and confirm
-planning is complete. The runner registers this spec under the selected role and
-requirement only after successful validation. Stop at planning; report unanswered
-material scope questions as blocked.
+Optional display context can be ordinary bullets in a `## Kanban` section in
+proposal.md: Requirement title, Requirement summary, Spec title, Owner, Role note,
+State, Note. Copy relevant requirement context only when supported by source;
+State is backlog, in_progress or blocked, and never signifies completion.
+This section is optional and cannot override the folder's identity.
+
+Preserve .openspec.yaml, sibling changes, main specs and implementation files.
+Validate the new change strictly and confirm planning is complete. All tasks
+start unchecked. Stop at planning and report unanswered material questions as
+blocked. A partial folder remains visible for a later explicit Update.

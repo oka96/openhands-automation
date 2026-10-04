@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import unittest
 from unittest import mock
@@ -28,19 +29,11 @@ class RoleRunnerTests(unittest.TestCase):
             directory = self.workspace / ".agents/skills" / skill
             directory.mkdir(parents=True)
             (directory / "SKILL.md").write_text("Use the selected OpenSpec skill.")
-        self.change = self.store / "openspec/changes/example-change"
-        self.change.mkdir(parents=True)
-        for file in ("proposal.md", "design.md"):
-            (self.change / file).write_text("# Shared planning\n\nPreserve this context.\n")
-        self.metadata = {"version": 2, "name": "Fixtures", "description": "Tests", "requirements": [{
-            "id": "REQ-006", "title": "Example", "summary": "Fixture", "change": "example-change",
-            "roles": {role: {"owner": "Fixture", "note": "", "specs": [self.entry(role, feature) for feature in ("first", "second")]}
-                      for role in runner.ROLES}}]}
         for role in runner.ROLES:
             for feature in ("first", "second"):
                 self.create_spec(self.spec_id(role, feature), role)
         self.metadata_path = self.store / "openspec/requirements.json"
-        self.save_metadata()
+        (self.store / "openspec/config.yaml").write_text("schema: spec-driven\n")
         self.config = {"mode": "role", "stage": "apply", "workspace": str(self.workspace), "spec_store": str(self.store),
                        "store_id": "fixture-store", "skill_root": str(self.workspace), "profile": "codex-acp-demo",
                        "timeout_seconds": 60, "canvas_url": "http://127.0.0.1:8000"}
@@ -48,24 +41,25 @@ class RoleRunnerTests(unittest.TestCase):
         self.prompt_path.write_text("Use only the selected spec, role and stage.")
         self.env = {"AGENT_SERVER_URL": "http://127.0.0.1:18000", "SESSION_API_KEY": "secret-session",
                     "AUTOMATION_CALLBACK_URL": "http://127.0.0.1:18001/callback", "AUTOMATION_CALLBACK_API_KEY": "secret-callback",
-                    "AUTOMATION_RUN_ID": "run-id", "AUTOMATION_AGENT_PROFILE_ID": "not-the-fixed-profile"}
+                    "AUTOMATION_RUN_ID": str(uuid.uuid4()), "AUTOMATION_AGENT_PROFILE_ID": "not-the-fixed-profile"}
         self.set_event("apply", "SA")
 
     def spec_id(self, role, feature="first"):
         return f"{runner.ROLE_PREFIXES[role]}-REQ-006-{feature}"
 
-    def entry(self, role, feature):
-        return {"id": self.spec_id(role, feature), "title": feature.title(), "state": "backlog", "note": ""}
+    def change_path(self, spec_id=None):
+        return self.store / "openspec/changes" / (spec_id or self.event["spec_id"])
 
     def task_path(self, spec_id=None):
-        return self.change / "tasks" / ((spec_id or self.event["spec_id"]) + ".md")
-
-    def save_metadata(self):
-        self.metadata_path.write_text(json.dumps(self.metadata))
+        return self.change_path(spec_id) / "tasks.md"
 
     def create_spec(self, spec_id, role):
-        directory = self.change / "specs" / spec_id
+        root = self.change_path(spec_id)
+        directory = root / "specs" / spec_id
         directory.mkdir(parents=True, exist_ok=True)
+        (root / ".openspec.yaml").write_text("schema: spec-driven\n")
+        for file in ("proposal.md", "design.md"):
+            (root / file).write_text("# Planning\n\nSelected role context.\n")
         (directory / "spec.md").write_text("# Spec\n\nSelected feature behavior.\n")
         path = self.task_path(spec_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,13 +68,14 @@ class RoleRunnerTests(unittest.TestCase):
     def set_event(self, stage, role, *, normalized=True, native=False, feature=None):
         self.config["stage"], self.config["role"] = stage, role
         self.config_path.write_text(json.dumps(self.config))
-        self.event = {"schema": "openspec-role-dashboard/v2", "type": f"{stage}.requested", "stage": stage,
+        selected = self.spec_id(role, feature or ("new-feature" if stage == "propose" else "first"))
+        self.change = self.change_path(selected)
+        self.event = {"schema": "openspec-role-dashboard/v3", "type": f"{stage}.requested", "stage": stage,
                       "approval": stage, "request_id": str(uuid.uuid4()), "spec_store": str(self.store),
-                      "requirement_id": "REQ-006", "context_change": "example-change", "role": role,
-                      "spec_id": self.spec_id(role, feature or ("new-feature" if stage == "propose" else "first")),
-                      "change": "example-change", "request": "Add clear task context and tests" if stage != "apply" else ""}
+                      "requirement_id": "REQ-006", "context_change": self.spec_id(role) if stage == "propose" else selected, "role": role,
+                      "spec_id": selected, "change": selected, "request": "Add clear task context and tests" if stage != "apply" else ""}
         trigger = {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                   "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"}
+                   "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"}
         if normalized:
             trigger.update(destination="dispatch_run", subject_key_expr=None, turn_text_expr=None, wake_agent=True)
         delivered = {"payload": self.event, "source_override": "openspec-role-dashboard", "event_key": f"{stage}.requested"} if native else self.event
@@ -99,13 +94,15 @@ class RoleRunnerTests(unittest.TestCase):
         if arguments[0] == "validate":
             return {"items": [{"id": config["change"], "valid": True}]}
         if arguments[0] == "status":
-            return {"isPlanningComplete": True, "schemaName": "role-specs"}
+            return {"isPlanningComplete": True, "schemaName": "spec-driven"}
         tasks = []
-        for path in sorted((self.change / "tasks").glob("*.md")):
+        for path in (self.change_path(config["change"]) / "tasks.md",):
+            if not path.exists():
+                continue
             for line, text in enumerate(path.read_text().splitlines(), 1):
-                match = re.fullmatch(r"- \[([ x])\] (.*)", text)
+                match = runner.TASK_LINE.match(text)
                 if match:
-                    tasks.append({"id": "1.1", "description": match.group(2), "done": match.group(1) == "x",
+                    tasks.append({"id": "1.1", "description": match.group(2), "done": (match.group(1) or '').lower() == "x",
                                   "sourcePath": str(path), "line": line})
         return {"tasks": tasks, "state": "ready"}
 
@@ -132,6 +129,7 @@ class RoleRunnerTests(unittest.TestCase):
                 mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback") as callback, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             client.return_value.run.side_effect = action or self.execute_action
+            client.return_value.conversation_id = str(uuid.uuid4())
             code = runner.main(["--config", str(self.config_path), "--prompt", str(self.prompt_path), *(["--check"] if check else [])], env=self.env)
         return code, output.getvalue(), client, callback
 
@@ -146,14 +144,11 @@ class RoleRunnerTests(unittest.TestCase):
                     self.assertEqual(code, 0, output)
                     client.return_value.run.assert_called_once()
                     self.assertEqual(callback.call_args.args[0]["status"], "completed")
-                    allowed = {f"openspec/changes/example-change/specs/{event['spec_id']}/spec.md",
-                               f"openspec/changes/example-change/tasks/{event['spec_id']}.md"}
+                    prefix = f"openspec/changes/{event['spec_id']}/"
+                    allowed = {prefix + f"specs/{event['spec_id']}/spec.md", prefix + "tasks.md"}
                     if stage == "propose":
-                        allowed.add("openspec/requirements.json")
-                        metadata = json.loads(self.metadata_path.read_text())
-                        self.assertEqual(len(metadata["requirements"]), 1)
-                        self.assertEqual(metadata["requirements"][0]["id"], "REQ-006")
-                        self.assertEqual(metadata["requirements"][0]["roles"][role]["specs"][-1]["id"], event["spec_id"])
+                        allowed.update(prefix + name for name in ("proposal.md", "design.md", ".openspec.yaml"))
+                    self.assertFalse(self.metadata_path.exists())
                     self.assertLessEqual(runner.changed_paths(before, runner.scope_snapshot(self.store)), allowed)
                     self.assertEqual((self.workspace / "app.js").read_text(), "original implementation\n")
 
@@ -223,8 +218,7 @@ class RoleRunnerTests(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
 
     def test_current_requirement_spec_association_and_store_registration_required(self):
-        self.metadata["requirements"][0]["roles"]["SA"]["specs"].pop(0)
-        self.save_metadata()
+        shutil.rmtree(self.change)
         code, output, client, _ = self.invoke()
         self.assertEqual(code, 1)
         self.assertIn("association has changed", output)
@@ -233,17 +227,15 @@ class RoleRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(runner.RunError, "does not match"):
                 runner.validate_role_store(self.config)
 
-    def test_metadata_version_duplicates_and_wrong_ownership_rejected(self):
-        original = json.loads(json.dumps(self.metadata))
-        for mutation in (lambda m: m.update(version=1),
-                         lambda m: m["requirements"][0]["roles"]["SA"]["specs"].append(self.entry("SA", "first")),
-                         lambda m: m["requirements"][0]["roles"]["SA"]["specs"][0].update(id=self.spec_id("Backend"))):
-            self.metadata = json.loads(json.dumps(original))
-            mutation(self.metadata)
-            self.save_metadata()
-            code, _, client, _ = self.invoke()
-            self.assertEqual(code, 1)
-            client.return_value.run.assert_not_called()
+    def test_malformed_role_names_and_linked_changes_rejected(self):
+        for name in ('SA-REQ-006-Invalid', 'FE-REQ-no-id-feature', 'fe-REQ-006-lowercase-role'):
+            path = self.change.parent / name
+            path.mkdir()
+            self.assertEqual(self.invoke()[0], 1)
+            path.rmdir()
+        linked = self.change.parent / 'SA-REQ-006-linked'
+        linked.symlink_to(self.workspace, target_is_directory=True)
+        self.assertEqual(self.invoke()[0], 1)
 
     def test_replay_native_and_raw_cannot_start_second_agent(self):
         event = self.set_event("apply", "Frontend", native=True)
@@ -272,15 +264,17 @@ class RoleRunnerTests(unittest.TestCase):
             self.assertIn("already exists", output)
             client.return_value.run.assert_not_called()
 
-    def test_failed_propose_preserves_metadata(self):
+    def test_failed_propose_leaves_discoverable_folder_without_registry(self):
         self.set_event("propose", "SA")
-        before = self.metadata_path.read_bytes()
         self.assertEqual(self.invoke(lambda *a, **k: {**SUCCESS, "status": "blocked"})[0], 1)
-        self.assertEqual(self.metadata_path.read_bytes(), before)
+        self.assertFalse(self.metadata_path.exists())
+        self.assertEqual((self.change / '.openspec.yaml').read_text(), 'schema: spec-driven\n')
+        self.assertIn(self.event['spec_id'], runner.read_role_changes(self.config))
 
-    def test_planning_cannot_edit_shared_sibling_metadata_or_implementation(self):
-        for target in (self.change / "proposal.md", self.change / "design.md", self.metadata_path,
-                       self.workspace / "app.js", self.change / "specs" / self.spec_id("QA") / "spec.md"):
+    def test_planning_cannot_edit_siblings_configuration_or_implementation(self):
+        sibling = self.change_path(self.spec_id('QA'))
+        for target in (sibling / "proposal.md", sibling / "design.md", self.store / 'openspec/config.yaml',
+                       self.workspace / "app.js", sibling / "specs" / self.spec_id("QA") / "spec.md"):
             self.set_event("update", "SA")
             before = target.read_bytes()
             def modify(config, prompt, **kwargs):
@@ -323,6 +317,41 @@ class RoleRunnerTests(unittest.TestCase):
                 return SUCCESS
             self.assertEqual(self.invoke(complete)[0], 1)
 
+    def test_blocked_or_findings_planning_cannot_mark_tasks_complete(self):
+        for stage in ('propose', 'update'):
+            for status in ('blocked', 'findings'):
+                self.set_event(stage, 'SA', feature=f'new-{status}' if stage == 'propose' else 'first')
+                def complete(config, prompt, **kwargs):
+                    if stage == 'propose':
+                        self.create_spec(config['spec_id'], config['role'])
+                    path = self.task_path()
+                    path.write_text(path.read_text().replace('[ ]', '[x]'))
+                    return {'status': status, 'summary': 'Still waiting for the contract', 'findings': ['Unresolved design']}
+                self.create_spec(self.spec_id('SA'), 'SA')
+                code, output, _, _ = self.invoke(complete)
+                self.assertEqual(code, 1, output)
+                outcome = self.read_report()['outcome']
+                self.assertEqual(outcome['status'], 'execution_error')
+                self.assertEqual(outcome['summary'], 'Still waiting for the contract')
+                self.assertTrue(outcome['audit_errors'])
+
+    def test_missing_or_invalid_task_source_preserves_agent_blocker_and_audit(self):
+        for action in ('delete', 'invalid-utf8'):
+            self.create_spec(self.spec_id('SA'), 'SA')
+            self.set_event('apply', 'SA')
+            def corrupt(config, prompt, **kwargs):
+                if action == 'delete':
+                    self.task_path().unlink()
+                else:
+                    self.task_path().write_bytes(b'\xff')
+                return {'status': 'blocked', 'summary': 'Backend still missing', 'findings': ['Need API'], 'blocker_type': 'dependency'}
+            self.assertEqual(self.invoke(corrupt)[0], 1)
+            outcome = self.read_report()['outcome']
+            self.assertEqual(outcome['status'], 'execution_error')
+            self.assertEqual(outcome['summary'], 'Backend still missing')
+            self.assertEqual(outcome['findings'], ['Need API'])
+            self.assertTrue(outcome['audit_errors'])
+
     def test_artifact_symlinks_missing_and_wrong_role_tasks_rejected(self):
         path = self.task_path()
         before = path.read_bytes()
@@ -339,7 +368,6 @@ class RoleRunnerTests(unittest.TestCase):
         for stage in ("propose", "update"):
             for role_first in (False, True):
                 self.set_event(stage, "SA", feature=("new-role-first" if role_first else "new-number-first") if stage == "propose" else "first")
-                before = self.metadata_path.read_bytes()
                 def duplicate(config, prompt, **kwargs):
                     if stage == "propose":
                         self.create_spec(config["spec_id"], config["role"])
@@ -350,37 +378,33 @@ class RoleRunnerTests(unittest.TestCase):
                 code, output, _, _ = self.invoke(duplicate)
                 self.assertEqual(code, 1)
                 self.assertIn("Duplicate task IDs", output)
-                self.assertEqual(self.metadata_path.read_bytes(), before)
+                self.assertFalse(self.metadata_path.exists())
                 if stage == "update":
                     self.create_spec(self.event["spec_id"], "SA")
                 else:
-                    self.task_path().unlink()
-                    directory = self.change / "specs" / self.event["spec_id"]
-                    (directory / "spec.md").unlink()
-                    directory.rmdir()
+                    shutil.rmtree(self.change)
 
-    def test_wrong_schema_rejects_all_stages_before_agent(self):
+    def test_wrong_schema_rejects_existing_change_actions_before_agent(self):
         original = self.fake_cli
         def wrong_schema(config, *arguments):
-            return {"schemaName": "spec-driven"} if arguments[0] == "status" else original(config, *arguments)
+            return {"schemaName": "role-specs"} if arguments[0] == "status" else original(config, *arguments)
         with mock.patch.object(self, "fake_cli", side_effect=wrong_schema):
-            for stage in runner.ROLE_STAGES:
+            for stage in ('update', 'apply'):
                 self.set_event(stage, "SA")
                 code, output, client, _ = self.invoke()
                 self.assertEqual(code, 1)
-                self.assertIn("role-specs schema", output)
+                self.assertIn("spec-driven schema", output)
                 client.return_value.run.assert_not_called()
 
-    def test_propose_cannot_register_a_task_file_without_its_specification(self):
+    def test_propose_cannot_complete_a_task_file_without_its_specification(self):
         self.set_event("propose", "SA")
-        before = self.metadata_path.read_bytes()
         def task_only(config, prompt, **kwargs):
             self.task_path().write_text("- [ ] 1.1 [SA] A task without a spec\n")
             return SUCCESS
         code, output, _, _ = self.invoke(task_only)
         self.assertEqual(code, 1)
-        self.assertIn("nonempty specification", output)
-        self.assertEqual(self.metadata_path.read_bytes(), before)
+        self.assertIn("capability specifications", output)
+        self.assertFalse(self.metadata_path.exists())
 
     def test_check_mode_does_not_consume_or_start(self):
         self.env.pop("AUTOMATION_EVENT_PAYLOAD")
@@ -390,12 +414,252 @@ class RoleRunnerTests(unittest.TestCase):
         callback.assert_not_called()
         self.assertFalse((self.root / ".openhands").exists())
 
+    def test_non_req_prefix_and_short_numeric_id_are_routed_from_folders(self):
+        selected = 'FE-STORY-12-api'
+        self.create_spec(selected, 'Frontend')
+        self.set_event('apply', 'Frontend')
+        self.event.update(requirement_id='STORY-12', spec_id=selected, change=selected, context_change=selected)
+        self.change = self.change_path(selected)
+        self.write_event()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(self.read_report()['requirement_id'], 'STORY-12')
+        self.assertTrue(self.task_path(selected).read_text().count('[x]'))
+        self.assertFalse(self.metadata_path.exists())
+
+    def test_v2_event_is_rejected_even_when_it_uses_current_folder_names(self):
+        self.event['schema'] = 'openspec-role-dashboard/v2'
+        self.write_event()
+        code, _, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        client.return_value.run.assert_not_called()
+
+    def test_discovery_ignores_registry_archive_and_unrelated_changes(self):
+        self.metadata_path.write_text('not even valid JSON; never read this')
+        (self.change.parent / 'archive/SA-REQ-999-hidden').mkdir(parents=True)
+        (self.change.parent / 'ordinary-change').mkdir()
+        changes = runner.read_role_changes(self.config)
+        self.assertEqual(len(changes), 8)
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(self.metadata_path.read_text(), 'not even valid JSON; never read this')
+
+    def test_untagged_standard_tasks_inherit_role_and_keep_evidence_checks(self):
+        self.task_path().write_text('- [ ] 1.1 Implement and verify the contract.\n')
+        code, output, _, _ = self.invoke()
+        self.assertEqual(code, 0, output)
+        self.assertIn('[x]', self.task_path().read_text())
+
+    def test_short_role_tags_match_folder_roles_and_preserve_exact_evidence_descriptions(self):
+        for role, alias in (("Frontend", "FE"), ("Backend", "BE")):
+            for description in (f"1.1 [{alias}] Implement the contract.", f"[{alias}] 1.1 Implement the contract."):
+                with self.subTest(role=role, description=description):
+                    self.set_event("apply", role)
+                    self.task_path().write_text(f"- [ ] {description}\n")
+                    code, output, client, callback = self.invoke()
+                    self.assertEqual(code, 0, output)
+                    client.return_value.run.assert_called_once()
+                    self.assertEqual(callback.call_args.args[0]["task_evidence"][0]["task"], description)
+
+    def test_conflicting_leading_short_role_tags_are_rejected_before_agent_execution(self):
+        for description in ("1.1 [FE] Implement a UI.", "[BE] 1.1 Implement an endpoint."):
+            with self.subTest(description=description):
+                self.set_event("apply", "SA")
+                self.task_path().write_text(f"- [ ] {description}\n")
+                code, output, client, _ = self.invoke()
+                self.assertEqual(code, 1)
+                self.assertIn("Explicit task tags must match", output)
+                client.return_value.run.assert_not_called()
+
+    def test_role_mentions_inside_task_prose_are_not_ownership_tags(self):
+        for description in ("1.1 Document the [QA] badge and [BE] label.",
+                            "[SA] 1.1 Review the [Frontend] interface."):
+            with self.subTest(description=description):
+                self.set_event("apply", "SA")
+                self.task_path().write_text(f"- [ ] {description}\n")
+                code, output, _, callback = self.invoke()
+                self.assertEqual(code, 0, output)
+                self.assertEqual(callback.call_args.args[0]["task_evidence"][0]["task"], description)
+
+    def test_native_list_marker_variants_can_be_checked_with_evidence(self):
+        for marker in ('1)', '1.', '+', '*', '-'):
+            self.set_event('apply', 'SA')
+            self.task_path().write_text(f'{marker}[ ] 1.1 Verify the contract.\n')
+            code, output, _, _ = self.invoke()
+            self.assertEqual(code, 0, output)
+            self.assertIn('[x]', self.task_path().read_text())
+
+    def test_propose_can_use_another_role_context_but_not_deleted_context(self):
+        self.set_event('propose', 'Frontend')
+        self.event['context_change'] = self.spec_id('SA')
+        self.write_event()
+        self.assertEqual(self.invoke()[0], 0)
+        self.set_event('propose', 'Frontend', feature='another-feature')
+        self.event['context_change'] = self.spec_id('SA')
+        self.write_event()
+        shutil.rmtree(self.change_path(self.spec_id('SA')))
+        code, _, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        client.return_value.run.assert_not_called()
+        self.assertFalse(self.change.exists())
+
+    def test_update_repairs_partial_propose_artifacts_without_registry(self):
+        self.set_event('propose', 'SA')
+        self.assertEqual(self.invoke(lambda *args, **kwargs: {**SUCCESS, 'status': 'blocked'})[0], 1)
+        self.set_event('update', 'SA', feature='new-feature')
+        def repair(config, prompt, **kwargs):
+            self.create_spec(config['spec_id'], config['role'])
+            return SUCCESS
+        code, output, _, _ = self.invoke(repair)
+        self.assertEqual(code, 0, output)
+        self.assertFalse(self.metadata_path.exists())
+
+    def test_update_can_revise_own_proposal_and_design(self):
+        self.set_event('update', 'SA')
+        def revise(config, prompt, **kwargs):
+            (self.change / 'proposal.md').write_text('# Revised motivation\n')
+            (self.change / 'design.md').write_text('# Revised decisions\n')
+            return SUCCESS
+        self.assertEqual(self.invoke(revise)[0], 0)
+
+    def test_planning_cannot_rewrite_schema_or_create_registry(self):
+        for name in ('.openspec.yaml', 'registry'):
+            self.set_event('update', 'SA')
+            target = self.change / name if name != 'registry' else self.metadata_path
+            before = target.read_bytes() if target.exists() else None
+            def modify(config, prompt, **kwargs):
+                target.write_text('unauthorized')
+                return SUCCESS
+            self.assertEqual(self.invoke(modify)[0], 1)
+            if before is None:
+                target.unlink()
+            else:
+                target.write_bytes(before)
+
+    def test_role_change_limit_rejects_new_proposal_before_scaffold(self):
+        for index in range(12):
+            self.create_spec(self.spec_id('SA', f'additional-{index}'), 'SA')
+        self.set_event('propose', 'SA')
+        code, output, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertIn('20 spec limit', output)
+        client.return_value.run.assert_not_called()
+        self.assertFalse(self.change.exists())
+
+    def test_task_limit_is_shared_across_requirement_changes(self):
+        self.task_path(self.spec_id('QA')).write_text(''.join(f'- [ ] {i} Task {i}\n' for i in range(501)))
+        code, output, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertIn('500 tasks across all role changes', output)
+        client.return_value.run.assert_not_called()
+
     def test_cli_uses_pinned_binary_structured_arguments_and_fixed_cwd(self):
         with mock.patch.object(runner.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=b'{"stores": []}')) as run:
             runner.role_cli(self.config, "store", "list", "--json")
         self.assertEqual(run.call_args.args[0], ["npx", "--no-install", "openspec", "store", "list", "--json"])
         self.assertEqual(run.call_args.kwargs["cwd"], str(self.workspace))
         self.assertNotIn("shell", run.call_args.kwargs)
+
+    def read_report(self):
+        return json.loads((self.root / '.openhands/apps/openspec-progress/role-results' /
+                           (self.env['AUTOMATION_RUN_ID'] + '.json')).read_text())
+
+    def test_reopening_checked_task_with_reason_preserves_dependency_blocker(self):
+        path = self.task_path()
+        path.write_text(path.read_text().replace('[ ]', '[x]'))
+        def reopen(config, prompt, **kwargs):
+            path.write_text(path.read_text().replace('[x]', '[ ]'))
+            return {'status': 'blocked', 'summary': 'Backend label contract is missing',
+                    'findings': ['UI cannot persist labels'], 'blocker_type': 'dependency',
+                    'next_action': 'Implement Backend labels, then resubmit Frontend Apply.',
+                    'task_corrections': [{'task': config['selected_tasks'][0]['description'], 'reason': 'No labels input or API exists'}]}
+        code, _, _, callback = self.invoke(reopen)
+        self.assertEqual(code, 1)
+        self.assertEqual(callback.call_args.args[0]['summary'], 'Backend label contract is missing')
+        outcome = self.read_report()['outcome']
+        self.assertEqual((outcome['status'], outcome['blocker_type']), ('blocked', 'dependency'))
+        self.assertEqual(outcome['audit_errors'], [])
+        self.assertEqual(outcome['findings'], ['UI cannot persist labels'])
+
+    def test_unexplained_reopening_preserves_original_result_and_specific_audit(self):
+        path = self.task_path()
+        path.write_text(path.read_text().replace('[ ]', '[x]'))
+        def reopen(config, prompt, **kwargs):
+            path.write_text(path.read_text().replace('[x]', '[ ]'))
+            return {'status': 'blocked', 'summary': 'Backend contract is missing', 'findings': ['Need backend first']}
+        code, _, _, callback = self.invoke(reopen)
+        result = callback.call_args.args[0]
+        self.assertEqual(code, 1)
+        self.assertIn('task_corrections reason', result['audit_errors'][0])
+        self.assertEqual(result['agent_result']['summary'], 'Backend contract is missing')
+        outcome = self.read_report()['outcome']
+        self.assertEqual(outcome['status'], 'execution_error')
+        self.assertEqual(outcome['summary'], 'Backend contract is missing')
+        self.assertEqual(outcome['agent_status'], 'blocked')
+
+    def test_correction_reason_does_not_allow_text_changes_or_sibling_changes(self):
+        for sibling in (False, True):
+            self.set_event('apply', 'SA')
+            target = self.task_path(self.spec_id('SA', 'second')) if sibling else self.task_path()
+            before = target.read_text()
+            def alter(config, prompt, **kwargs):
+                target.write_text(before.replace('feature', 'unapproved scope'))
+                return {'status': 'blocked', 'summary': 'Need input', 'findings': [],
+                        'task_corrections': [{'task': config['selected_tasks'][0]['description'], 'reason': 'Not implemented'}]}
+            self.assertEqual(self.invoke(alter)[0], 1)
+            self.assertEqual(self.read_report()['outcome']['status'], 'execution_error')
+            self.assertTrue(self.read_report()['outcome']['audit_errors'])
+            target.write_text(before)
+
+    def test_reopened_task_cannot_report_completed(self):
+        path = self.task_path()
+        path.write_text(path.read_text().replace('[ ]', '[x]'))
+        def reopen(config, prompt, **kwargs):
+            path.write_text(path.read_text().replace('[x]', '[ ]'))
+            return {**SUCCESS, 'task_corrections': [{'task': config['selected_tasks'][0]['description'], 'reason': 'Evidence missing'}]}
+        self.assertEqual(self.invoke(reopen)[0], 1)
+        self.assertIn('remain unfinished', self.read_report()['outcome']['audit_errors'][0])
+
+    def test_outcome_report_is_bound_private_bounded_and_redacted(self):
+        def blocked(*args, **kwargs):
+            return {'status': 'blocked', 'summary': 'secret-session ' + '长' * 3000,
+                    'findings': ['secret-callback'] * 12, 'next_action': 'Read the conversation'}
+        self.invoke(blocked)
+        report = self.read_report()
+        self.assertEqual(report['run_id'], self.env['AUTOMATION_RUN_ID'])
+        self.assertEqual(report['spec_id'], self.event['spec_id'])
+        self.assertEqual(report['role'], 'SA')
+        self.assertEqual(report['configuration']['profile'], 'codex-acp-demo')
+        self.assertEqual(len(report['outcome']['summary']), 2000)
+        self.assertEqual(len(report['outcome']['findings']), 8)
+        self.assertNotIn('secret-session', json.dumps(report))
+        self.assertNotIn('secret-callback', json.dumps(report))
+        path = self.root / '.openhands/apps/openspec-progress/role-results' / (report['run_id'] + '.json')
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_report_failure_cannot_claim_success(self):
+        with mock.patch.object(runner, 'save_role_outcome', side_effect=OSError('private error')):
+            code, output, _, callback = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertEqual(callback.call_args.args[0]['outcome'], 'execution_error')
+        self.assertNotIn('private error', output)
+
+    def test_native_run_rejection_explains_kanban_without_starting_agent(self):
+        self.env['AUTOMATION_EVENT_PAYLOAD'] = '{}'
+        code, output, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        client.assert_not_called()
+        self.assertIn('OpenSpec Kanban', output)
+        self.assertEqual(self.read_report()['outcome']['status'], 'needs_review')
+
+    def test_report_writer_rejects_symlinks_and_invalid_run_ids(self):
+        with mock.patch.object(runner.Path, 'home', return_value=self.root):
+            with self.assertRaises(runner.RunError):
+                runner.save_role_outcome(self.config, self.event, SUCCESS, {**self.env, 'AUTOMATION_RUN_ID': '../escape'}, None)
+            root = self.root / '.openhands/apps/openspec-progress'
+            root.mkdir(parents=True)
+            (root / 'role-results').symlink_to(self.workspace, target_is_directory=True)
+            with self.assertRaisesRegex(runner.RunError, 'symlinked'):
+                runner.save_role_outcome(self.config, self.event, SUCCESS, self.env, None)
 
 
 if __name__ == "__main__":

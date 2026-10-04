@@ -162,6 +162,24 @@ class RunnerTests(unittest.TestCase):
         finding = {"status": "findings", "summary": "One test failed", "findings": ["failure"]}
         self.assertEqual(runner.terminal_result(json.dumps(SUCCESS) + "\n" + json.dumps(finding)), finding)
 
+    def test_result_classification_distinguishes_business_and_runtime_failures(self):
+        for result, expected in ((SUCCESS, 'completed'),
+                ({'status': 'blocked', 'summary': 'Need input', 'findings': []}, 'blocked'),
+                ({'status': 'findings', 'summary': 'Review issue', 'findings': ['Issue']}, 'needs_review'),
+                ({'status': 'blocked', 'summary': 'Transport failed', 'findings': [], 'outcome': 'execution_error'}, 'execution_error')):
+            self.assertEqual(runner.run_outcome(result, {})['status'], expected)
+        for status in ('paused', 'waiting_for_confirmation'):
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(runner.RunError) as error:
+                self.client(FakeServer([status])).run(self.config, 'prompt')
+            self.assertEqual(error.exception.outcome, 'needs_review')
+
+    def test_agent_cannot_forge_runner_outcome_or_invalid_corrections(self):
+        for patch in ({'outcome': 'completed'}, {'blocker_type': 'invented'}, {'next_action': {}},
+                      {'task_corrections': [{'task': 'task', 'reason': ''}]},
+                      {'task_evidence': [{'task': 'task', 'evidence': 'ok', 'private': 'secret'}]}):
+            with self.assertRaises(runner.RunError):
+                runner.terminal_result(json.dumps({**SUCCESS, **patch}))
+
     def test_timeout_cannot_exceed_local_service_limit(self):
         self.config["timeout_seconds"] = 1801
         self.write_config()

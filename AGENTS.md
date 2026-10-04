@@ -12,18 +12,26 @@ application is configured in `role-workflow.json`; this repository is not that a
 - Role actions use the separate signed `openspec-role-dashboard` event source.
   Require a validated explicit event matching the bundle’s fixed role and stage,
   including prompt, selected
-  requirement, canonical spec ID, and current context change. Events use schema v2. Native zero-input Run is unsupported.
+  requirement, canonical change/spec ID, and current context change. Events use schema v3. Native zero-input Run is unsupported.
   Keep deployment paths/profile fixed in `role-workflow.json`; event inputs must
-  never override them. Validate store registry and current metadata association,
+  never override them. Validate store registration and current folder association,
   lock both store and workspace, and reject replayed request IDs.
-- Role Propose adds one role-owned spec to the selected requirement only after
-  successful artifact validation. The role-specs schema stores specs/<ID>/spec.md
-  and tasks/<ID>.md inside the existing requirement change. Shared proposal/design
-  and sibling artifacts remain read-only. Update edits planning from the submitted
+- Requirement identity comes only from the role change directory:
+  openspec/changes/<SA|FE|BE|QA>-<PREFIX>-<digits>-<feature>. Preserve exact prefix
+  and digits. Never require or create requirements.json or another global index.
+- Role Propose scaffolds one new role-owned change for the selected requirement.
+  The standard spec-driven schema stores proposal.md, design.md,
+  specs/<capability>/spec.md and tasks.md in that independent folder. The runner
+  creates the exact uppercase folder and .openspec.yaml because the pinned CLI's
+  new-change command is lowercase-only; its existing-change commands accept it.
+  Update edits that change's planning from the submitted
   revision prompt; that explicit submission authorizes those scoped artifact
-  edits without an additional generic per-artifact confirmation. Apply implements
-  only the selected spec's tasks and checks only tasks with verification evidence.
-  Preserve stage boundaries, other roles, other changes, main specs, and metadata.
+  edits without an additional generic per-artifact confirmation, including repair
+  of partial planning. Apply implements only the selected change's tasks and
+  checks only tasks with verification evidence. Untagged tasks inherit its role;
+  explicit role tags must agree. Preserve stage boundaries, sibling changes,
+  main specs and schema configuration. Optional Kanban Markdown context is display
+  data; folder names and task evidence remain authoritative.
 - Never put credentials, session keys, or model tokens in files. Use the runtime's
   injected environment and the user's saved OpenHands agent profile.
 - Keep the runtime Python standard-library only. Do not introduce ADLC skills:

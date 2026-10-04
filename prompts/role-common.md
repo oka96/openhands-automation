@@ -27,15 +27,23 @@ answers, apply unrequested revisions, or treat the prompt as a different action.
 
 Do not install tools, initialize OpenSpec, read `.local/`, extract credentials,
 change model settings, commit, push, merge, publish, deploy, sync main specs, or
-archive changes. Do not modify requirements.json; the runner registers successful
-new role specs. Preserve existing user work and report conflicts instead of
+archive changes. Role and requirement identity comes exclusively from the folder
+`openspec/changes/<SA|FE|BE|QA>-<requirementPrefix>-<requirementId>-<feature>`.
+The exact prefix and digits identify the requirement, including leading zeroes.
+No requirements.json or other registry is needed; never create one.
+Preserve existing user work and report conflicts instead of
 overwriting it. Use existing approved browser access when required; absent browser
 evidence is a blocker, not a passing check. Never weaken acceptance tests.
 
 Finish with one final JSON object and no following text:
-{"status":"completed","summary":"Changes, verification evidence, and next human action","findings":[],"task_evidence":[]}
+{"status":"completed","summary":"Changes and verification evidence","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
 Status is completed, blocked, or findings. Only completed with no findings can
 pass. For each newly checked Apply task, include an object in task_evidence with
 its exact OpenSpec task description in `task` and concrete successful commands,
 observed results, and/or browser scenario evidence in `evidence`. Do not fabricate
 evidence. A role action may complete while the other roles remain unfinished.
+For a blocked result, add blocker_type: "dependency" when another implementation
+or prerequisite is missing, or "input" when human input is needed. Include a
+concrete next_action. Findings should be plain text without secrets or raw logs.
+When reopening an unsupported checked task, include its exact description in
+task_corrections with a nonempty reason. Never use this to revise task text.

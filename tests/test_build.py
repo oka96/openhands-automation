@@ -37,10 +37,14 @@ class BuildTests(unittest.TestCase):
                     self.assertEqual(metadata["name"], f"OpenSpec {role} · {stage.title()}")
                     self.assertEqual(metadata["trigger"], {
                         "type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                        "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"})
+                        "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"})
                     self.assertEqual(json.loads((directory / "tarball/config.json").read_text()),
                                      {**self.role_config, "mode": "role", "stage": stage, "role": role})
-                    self.assertEqual((directory / "tarball/prompt.md").read_text(), f"Role boundaries.\n\nRole {stage}.\n")
+                    prompt = (directory / "tarball/prompt.md").read_text()
+                    self.assertTrue(prompt.endswith(f"Role boundaries.\n\nRole {stage}.\n"))
+                    self.assertIn(f"Effective role: {role}; skill: {stage}; saved agent profile: codex-acp-demo", prompt)
+                    self.assertIn("Native Run now is unsupported", prompt)
+                    self.assertIn("native profile selector does not override", prompt)
                     self.assertEqual((directory / "tarball/run.py").read_text(), (self.root / "runtime/run.py").read_text())
         self.assertEqual(builder.build(self.root, check=True), [])
         self.assertEqual(builder.build(self.root), [])

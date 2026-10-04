@@ -40,16 +40,33 @@ ROLE_CONFIG_FIELDS = {"workspace", "spec_store", "store_id", "skill_root", "prof
 ROLE_EVENT_FIELDS = {"schema", "type", "stage", "approval", "request_id", "spec_store", "requirement_id", "context_change", "role", "spec_id", "change", "request"}
 CHANGE_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 ROLE_PREFIXES = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}
+ROLE_CHANGE = re.compile(r"(SA|FE|BE|QA)-([A-Z][A-Z0-9]*)-([0-9]+)-([a-z0-9]+(?:-[a-z0-9]+)*)")
+TASK_LINE = re.compile(r"^\s*(?:[-*+]|\d{1,9}[.)])\s*\[(?:\s*([^\]\s]?)\s*\](?![([])|\s+\])\s*(.*)")
+
+
+def role_change(value):
+    match = ROLE_CHANGE.fullmatch(value) if isinstance(value, str) and len(value) <= 160 else None
+    if not match:
+        return None
+    return {"role": next(role for role, prefix in ROLE_PREFIXES.items() if prefix == match[1]),
+            "requirement_id": f"{match[2]}-{match[3]}", "feature": match[4]}
 
 
 def valid_spec_id(value, requirement_id, role):
-    prefix = f"{ROLE_PREFIXES.get(role, '')}-{requirement_id}-"
-    return (isinstance(value, str) and len(value) <= 160 and value.startswith(prefix)
-            and CHANGE_NAME.fullmatch(value[len(prefix):]) is not None)
+    identity = role_change(value)
+    return bool(identity and identity["requirement_id"] == requirement_id and identity["role"] == role)
 
 
 class RunError(Exception):
     """An actionable, safe-to-log automation failure."""
+
+    def __init__(self, message, *, outcome="execution_error"):
+        super().__init__(message)
+        self.outcome = outcome
+
+
+ROLE_LAUNCH_HELP = ("A signed role action event is required. Open OpenSpec Kanban, choose a requirement, "
+                    "Role spec and Skill, then submit there. Native Run now has no requirement context.")
 
 
 def local_url(value, *, origin_only=True):
@@ -205,17 +222,17 @@ def require_role_trigger(env, config):
     try:
         payload = json.loads(env.get("AUTOMATION_EVENT_PAYLOAD", ""))
     except (TypeError, ValueError):
-        raise RunError("A signed role action event is required") from None
+        raise RunError(ROLE_LAUNCH_HELP, outcome="needs_review") from None
     stage, role = config["stage"], config["role"]
     expected_trigger = {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                        "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"}
+                        "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"}
     defaults = {"destination": "dispatch_run", "subject_key_expr": None, "turn_text_expr": None, "wake_agent": True}
     trigger = payload.get("trigger_payload") if isinstance(payload, dict) else None
     if (not isinstance(payload, dict) or payload.get("trigger") != "event"
             or not isinstance(trigger, dict) or set(trigger) - (expected_trigger.keys() | defaults.keys())
             or any(trigger.get(key) != value for key, value in expected_trigger.items())
             or any(key in trigger and trigger[key] != value for key, value in defaults.items())):
-        raise RunError("A signed role action event is required")
+        raise RunError(ROLE_LAUNCH_HELP, outcome="needs_review")
     event = payload.get("event")
     # CustomWebhookEvent.model_dump() is the native dispatch shape. The signed
     # request is nested in payload; validate routing metadata before unwrapping.
@@ -226,24 +243,24 @@ def require_role_trigger(env, config):
             raise RunError("Invalid native role event wrapper; source and event key must match this action")
         event = event["payload"]
     if (not isinstance(event, dict) or set(event) != ROLE_EVENT_FIELDS
-            or event.get("schema") != "openspec-role-dashboard/v2"
+            or event.get("schema") != "openspec-role-dashboard/v3"
             or event.get("stage") != stage or event.get("approval") != stage
             or event.get("type") != f"{stage}.requested" or event.get("role") != role):
         raise RunError("Invalid role action event; submit an explicit role and stage")
     if event["spec_store"] != config["spec_store"]:
         raise RunError("Role event spec store must match this automation's configured store")
-    for key in ("change", "context_change"):
-        if not isinstance(event[key], str) or len(event[key]) > 100 or not CHANGE_NAME.fullmatch(event[key]):
-            raise RunError(f"Role {key} must be a kebab-case name of at most 100 characters")
-    if not isinstance(event["requirement_id"], str) or not re.fullmatch(r"REQ-[0-9]{3,}", event["requirement_id"]):
+    if not isinstance(event["requirement_id"], str) or not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", event["requirement_id"]):
         raise RunError("Invalid role requirement ID")
     if not valid_spec_id(event["spec_id"], event["requirement_id"], role):
         raise RunError("Spec ID must match the selected requirement and role")
+    context = role_change(event["context_change"])
+    if (event["change"] != event["spec_id"] or not context
+            or context["requirement_id"] != event["requirement_id"]
+            or stage != "propose" and event["context_change"] != event["change"]):
+        raise RunError("Role action must bind a canonical change and context in its selected requirement")
     if (not isinstance(event["request"], str) or len(event["request"]) > 10000
             or (stage in ("propose", "update") and not event["request"].strip())):
         raise RunError("Role Propose and Update require a prompt; prompts must be at most 10000 characters")
-    if event["change"] != event["context_change"]:
-        raise RunError("Every role action must use the requirement's current change")
     try:
         if str(uuid.UUID(event["request_id"])) != event["request_id"]:
             raise ValueError()
@@ -280,45 +297,34 @@ def safe_store_file(config, path):
     return path
 
 
-def read_role_metadata(config):
-    path = safe_store_file(config, Path(config["spec_store"]) / "openspec/requirements.json")
+def read_role_changes(config):
+    """Derive membership only from bounded, non-linked active change folders."""
+    root = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes")
+    changes, groups = {}, {}
     try:
-        if path.stat().st_size > 128 * 1024:
-            raise RunError("Requirement metadata exceeds 128 KiB")
-        metadata = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise RunError("Cannot read valid requirement metadata from the configured store") from None
-    if (not isinstance(metadata, dict) or type(metadata.get("version")) is not int or metadata["version"] != 2
-            or not isinstance(metadata.get("requirements"), list) or not 1 <= len(metadata["requirements"]) <= 50):
-        raise RunError("Requirement metadata v2 must contain 1 to 50 requirements")
-    ids, changes, spec_ids = set(), set(), set()
-    for item in metadata["requirements"]:
-        if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
-                or not re.fullmatch(r"REQ-[0-9]{3,}", item["id"])
-                or not isinstance(item.get("change"), str) or not CHANGE_NAME.fullmatch(item["change"])
-                or len(item["change"]) > 100 or not isinstance(item.get("roles"), dict)
-                or set(item["roles"]) != set(ROLES) or item["id"] in ids or item["change"] in changes):
-            raise RunError("Requirement metadata has invalid, duplicate, or missing role associations")
-        ids.add(item["id"])
-        changes.add(item["change"])
-        count = 0
-        for role, entry in item["roles"].items():
-            if (not isinstance(entry, dict) or set(entry) != {"owner", "note", "specs"}
-                    or not isinstance(entry["owner"], str) or not isinstance(entry["note"], str)
-                    or not isinstance(entry["specs"], list)):
-                raise RunError("Requirement metadata has invalid role spec lists")
-            count += len(entry["specs"])
-            for spec in entry["specs"]:
-                if (not isinstance(spec, dict) or set(spec) != {"id", "title", "state", "note"}
-                        or not valid_spec_id(spec["id"], item["id"], role) or spec["id"] in spec_ids
-                        or not isinstance(spec["title"], str) or not spec["title"].strip() or len(spec["title"]) > 200
-                        or spec["state"] not in ("backlog", "in_progress", "blocked")
-                        or not isinstance(spec["note"], str)):
-                    raise RunError("Requirement metadata has invalid, duplicate, or wrong-role specs")
-                spec_ids.add(spec["id"])
-        if count > 20:
-            raise RunError("A requirement may contain at most 20 specs")
-    return metadata
+        with os.scandir(root) as entries:
+            for count, entry in enumerate(entries, 1):
+                if count > 1000:
+                    raise RunError("Active change directory exceeds 1000 entries")
+                if entry.name == "archive" or entry.name.startswith("."):
+                    continue
+                if entry.is_symlink():
+                    raise RunError("Active changes must not use symlinks")
+                identity = role_change(entry.name)
+                if not identity:
+                    if re.match(r"^(SA|FE|BE|QA)-", entry.name, re.I):
+                        raise RunError("Malformed role change folder name")
+                    continue
+                if not entry.is_dir(follow_symlinks=False):
+                    raise RunError("A role change must be a directory")
+                changes[entry.name] = identity
+                requirement = identity["requirement_id"]
+                groups[requirement] = groups.get(requirement, 0) + 1
+                if len(groups) > 50 or groups[requirement] > 20:
+                    raise RunError("Store supports at most 50 requirements and 20 changes per requirement")
+    except OSError:
+        raise RunError("Cannot read active role change folders") from None
+    return changes
 
 
 def validate_role_store(config):
@@ -329,56 +335,72 @@ def validate_role_store(config):
         raise RunError("Registered OpenSpec store ID does not match the configured spec store")
 
 
+def validate_requirement_tasks(config, changes):
+    total = 0
+    for name, identity in changes.items():
+        if identity["requirement_id"] != config["requirement_id"]:
+            continue
+        path = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / name / "tasks.md")
+        if not path.exists():
+            continue
+        if not path.is_file() or path.stat().st_size > 64 * 1024:
+            raise RunError("Role task files must be regular files of at most 64 KiB")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise RunError("Cannot read a role task file") from None
+        total += sum(TASK_LINE.match(line) is not None for line in text.splitlines())
+        if total > 500:
+            raise RunError("A requirement supports at most 500 tasks across all role changes")
+
+
 def role_tasks(config, *, require_ready=True):
-    expected_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks" / (config["spec_id"] + ".md")
+    expected_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
     safe_store_file(config, expected_path)
+    if not expected_path.is_file() or not 0 < expected_path.stat().st_size <= 64 * 1024:
+        raise RunError("Selected tasks.md must be present and at most 64 KiB")
     data = role_cli(config, "instructions", "apply", "--change", config["change"],
                     "--store", config["store_id"], "--json")
     if require_ready and data.get("state") not in ("ready", "all_done"):
         raise RunError("The selected store change has incomplete or blocked planning artifacts")
     tasks = data.get("tasks")
     if not isinstance(tasks, list) or not tasks or len(tasks) > 500:
-        raise RunError("The selected store change must have 1 to 500 tagged tasks")
-    metadata = read_role_metadata(config)
-    requirement = next(item for item in metadata["requirements"] if item["id"] == config["requirement_id"])
-    owners = {spec["id"]: role for role, entry in requirement["roles"].items() for spec in entry["specs"]}
-    if config["stage"] == "propose":
-        owners[config["spec_id"]] = config["role"]
-    sources = {str(expected_path.parent / (spec_id + ".md")): role for spec_id, role in owners.items()}
+        raise RunError("The selected store change must have 1 to 500 tasks")
     selected, seen, seen_ids = [], set(), set()
     for task in tasks:
         if (not isinstance(task, dict) or not isinstance(task.get("description"), str)
-                or type(task.get("done")) is not bool or task.get("sourcePath") not in sources
+                or type(task.get("done")) is not bool or task.get("sourcePath") != str(expected_path)
                 or type(task.get("line")) is not int or task["line"] <= 0):
-            raise RunError("OpenSpec returned invalid or unregistered spec task sources")
-        tags = re.findall(r"\[(SA|Frontend|Backend|QA)\]", task["description"])
+            raise RunError("OpenSpec returned tasks outside the selected role change")
         identity = (task["sourcePath"], task["description"])
-        if len(tags) != 1 or tags[0] != sources[task["sourcePath"]] or identity in seen:
-            raise RunError("Every task needs its owning spec's role tag and a unique description")
+        if identity in seen:
+            raise RunError("Task descriptions within a selected role change must be unique")
         description = task["description"].strip()
         number = re.match(r"^(\d+(?:\.\d+)+|\d+)\.?\s+", description)
         local_id = number.group(1) if number else f"line-{task['line']}"
         if number:
             description = description[number.end():]
-        role_prefix = re.match(r"^\[(SA|Frontend|Backend|QA)\]\s*", description)
-        if not role_prefix:
-            raise RunError("Every task must begin with its owning role tag after an optional task number")
-        description = description[role_prefix.end():]
-        if not number:
-            after = re.match(r"^(\d+(?:\.\d+)+|\d+)\.?\s+", description)
-            if after:
-                local_id, description = after.group(1), description[after.end():]
+        role_prefix = re.match(r"^\[(SA|Frontend|Backend|QA|FE|BE)\]\s*", description)
+        if role_prefix:
+            tagged_role = {"FE": "Frontend", "BE": "Backend"}.get(role_prefix[1], role_prefix[1])
+            if tagged_role != config["role"]:
+                raise RunError("Explicit task tags must match the folder's role")
+            description = description[role_prefix.end():]
+            if not number:
+                after = re.match(r"^(\d+(?:\.\d+)+|\d+)\.?\s+", description)
+                if after:
+                    local_id, description = after.group(1), description[after.end():]
         if not description.strip() or len(description) > 4000:
             raise RunError("Task descriptions must contain 1 to 4000 characters")
         if (task["sourcePath"], local_id) in seen_ids:
             raise RunError("Duplicate task IDs within a spec are not allowed")
         seen_ids.add((task["sourcePath"], local_id))
-        task["role"] = tags[0]
+        task["role"] = config["role"]
         seen.add(identity)
         if task["sourcePath"] == str(expected_path):
             selected.append(task)
     if not selected:
-        raise RunError("The selected spec must have nonempty tasks owned by its role")
+        raise RunError("The selected role change must have nonempty tasks")
     return selected
 
 
@@ -387,36 +409,32 @@ def role_preflight(config, event):
     config = {**config, **{key: event[key] for key in ("change", "context_change", "requirement_id", "spec_id", "request")},
               "dashboard_request_id": event["request_id"], "skill": STAGES[config["stage"]]}
     validate_role_store(config)
-    metadata = read_role_metadata(config)
-    matches = [item for item in metadata["requirements"] if item["id"] == config["requirement_id"]]
-    if len(matches) != 1 or matches[0]["change"] != config["context_change"]:
+    changes = read_role_changes(config)
+    validate_requirement_tasks(config, changes)
+    context = changes.get(config["context_change"])
+    if not context or context["requirement_id"] != config["requirement_id"]:
         raise RunError("The requirement/context change association has changed; refresh the board")
-    requirement = matches[0]
-    context = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
-    if not context.is_dir():
-        raise RunError("The requirement's active change is missing")
-    status = role_cli(config, "status", "--change", config["change"], "--store", config["store_id"], "--json")
-    if status.get("schemaName") != "role-specs":
-        raise RunError("The requirement must use the role-specs schema; migrate its workflow before running")
-    for entry in context.rglob("*"):
+    target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
+    context_root = Path(config["spec_store"]) / "openspec/changes" / config["context_change"]
+    for entry in context_root.rglob("*"):
         safe_store_file(config, entry)
-    targets = [context / "specs" / config["spec_id"], context / "tasks" / (config["spec_id"] + ".md")]
-    for target in targets:
-        safe_store_file(config, target)
-    specs = requirement["roles"][config["role"]]["specs"]
-    registered = any(spec["id"] == config["spec_id"] for spec in specs)
     if config["stage"] == "propose":
-        if registered or any(target.exists() for target in targets):
+        if target.exists():
             raise RunError("The proposed spec already exists; choose a new unused feature name")
-        if sum(len(role["specs"]) for role in requirement["roles"].values()) >= 20:
+        if sum(item["requirement_id"] == config["requirement_id"] for item in changes.values()) >= 20:
             raise RunError("The requirement's 20 spec limit has been reached")
     else:
-        if not registered:
+        if changes.get(config["change"]) != role_change(config["spec_id"]):
             raise RunError("The selected requirement/role/spec association has changed; refresh the board")
-        if not (targets[0] / "spec.md").is_file() or not targets[1].is_file():
-            raise RunError("The selected spec's specification or tasks are missing")
-        config["selected_tasks"] = role_tasks(config, require_ready=config["stage"] == "apply")
-    return config, metadata
+        status = role_cli(config, "status", "--change", config["change"], "--store", config["store_id"], "--json")
+        if status.get("schemaName") != "spec-driven":
+            raise RunError("Role changes must use the standard spec-driven schema")
+        for entry in target.rglob("*"):
+            safe_store_file(config, entry)
+        if config["stage"] == "apply":
+            config["selected_tasks"] = role_tasks(config)
+    config["related_changes"] = sorted(name for name, item in changes.items() if item["requirement_id"] == config["requirement_id"])
+    return config, changes
 
 
 def scope_snapshot(root):
@@ -451,38 +469,70 @@ def changed_paths(before, after):
     return {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
 
 
+def checked_task_descriptions(content):
+    return {match[2].strip() for line in content.splitlines()
+            if (match := TASK_LINE.match(line)) and (match[1] or "").lower() == "x"}
+
+
 def audit_role_scope(config, before_store, before_workspace, before_tasks, result):
     changed = changed_paths(before_store, scope_snapshot(config["spec_store"]))
     prefix = f"openspec/changes/{config['change']}/"
-    task_path = prefix + "tasks/" + config["spec_id"] + ".md"
-    spec_path = prefix + "specs/" + config["spec_id"] + "/spec.md"
-    allowed = lambda path: path == task_path if config["stage"] == "apply" else path in (task_path, spec_path)
+    task_path = prefix + "tasks.md"
+    def allowed(path):
+        if config["stage"] == "apply":
+            return path == task_path
+        return path in {task_path, prefix + "proposal.md", prefix + "design.md"} or (
+            path.startswith(prefix) and re.fullmatch(r"specs/(?:[A-Za-z0-9_-]+/)+spec\.md", path[len(prefix):]) is not None)
     if any(not allowed(path) for path in changed):
         raise RunError("Role action changed files outside its permitted store scope; inspect the conversation and preserve recovery evidence")
     for entry in (Path(config["spec_store"]) / prefix).rglob("*"):
         safe_store_file(config, entry)
     if config["stage"] != "apply" and scope_snapshot(config["workspace"]) != before_workspace:
         raise RunError("Planning action changed implementation files; inspect the conversation before continuing")
+    if config["stage"] != "apply":
+        path = safe_store_file(config, Path(config["spec_store"]) / task_path)
+        if path.exists():
+            if not path.is_file() or path.stat().st_size > 64 * 1024:
+                raise RunError("Selected tasks.md must be a regular file of at most 64 KiB")
+            checked = checked_task_descriptions(path.read_text(encoding="utf-8"))
+            if config["stage"] == "propose" and checked:
+                raise RunError("A new proposal must start with all selected spec tasks unchecked")
+            if config["stage"] == "update" and checked - checked_task_descriptions(before_tasks):
+                raise RunError("Update must not newly complete tasks or transfer completion to revised task text")
     if config["stage"] == "apply":
         path = safe_store_file(config, Path(config["spec_store"]) / task_path)
+        if not path.is_file() or not 0 < path.stat().st_size <= 64 * 1024:
+            raise RunError("Apply removed its tasks.md or made it empty or oversized")
         after = path.read_text(encoding="utf-8")
         old_lines, new_lines = before_tasks.splitlines(keepends=True), after.splitlines(keepends=True)
         if len(old_lines) != len(new_lines):
             raise RunError("Apply may change selected role checkboxes only, not task structure")
-        newly_done = set()
+        newly_done, reopened = set(), set()
         selected_lines = {task["line"]: task for task in config["selected_tasks"]}
         for number, (old, new) in enumerate(zip(old_lines, new_lines), start=1):
             if old == new:
                 continue
             task = selected_lines.get(number)
-            pattern = r"^(\s*[-*+]\s+\[)(\s*\S?\s*)(\].*)$"
+            pattern = r"^(\s*(?:[-*+]|\d{1,9}[.)])\s*\[)(\s*\S?\s*)(\].*)$"
             a, b = re.match(pattern, old.rstrip("\r\n")), re.match(pattern, new.rstrip("\r\n"))
             if (not task or not a or not b or a.group(1, 3) != b.group(1, 3)
-                    or old[len(old.rstrip("\r\n")):] != new[len(new.rstrip("\r\n")):]
-                    or b.group(2).strip().lower() != "x"):
-                raise RunError("Apply changed task text or another role's task; only selected role completion is allowed")
-            if not task["done"]:
+                    or old[len(old.rstrip("\r\n")):] != new[len(new.rstrip("\r\n")):]):
+                raise RunError(f"Apply changed selected task text or structure at line {number}; only completion markers may change")
+            marker = b.group(2).strip().lower()
+            if marker not in ("", "x"):
+                raise RunError(f"Apply used an unsupported task marker at line {number}")
+            if task["done"] and marker == "":
+                reopened.add(task["description"])
+            elif not task["done"] and marker == "x":
                 newly_done.add(task["description"])
+        corrections = result.get("task_corrections", [])
+        if not isinstance(corrections, list):
+            raise RunError("Apply task_corrections must be an array")
+        explained = {entry["task"] for entry in corrections if isinstance(entry, dict)
+                     and isinstance(entry.get("task"), str) and isinstance(entry.get("reason"), str)
+                     and entry["reason"].strip()}
+        if reopened - explained:
+            raise RunError("Apply reopened a completed task without an exact task_corrections reason")
         evidence = result.get("task_evidence", [])
         if not isinstance(evidence, list):
             raise RunError("Apply task evidence must be an array")
@@ -493,11 +543,16 @@ def audit_role_scope(config, before_store, before_workspace, before_tasks, resul
             raise RunError("Apply checked tasks without concrete task_evidence in its final result")
 
 
-def validate_role_result(config, metadata, before_tasks, result):
+def validate_role_result(config, changes, before_tasks, result):
     if result["status"] != "completed":
         return result
+    current = read_role_changes(config)
+    validate_requirement_tasks(config, current)
     root = Path(config["spec_store"]) / "openspec/changes" / config["change"]
-    for relative in (f"specs/{config['spec_id']}/spec.md", f"tasks/{config['spec_id']}.md"):
+    specs = list((root / "specs").rglob("spec.md"))
+    if not 1 <= len(specs) <= 20:
+        raise RunError("The selected role change must have 1 to 20 capability specifications")
+    for relative in ("proposal.md", "design.md", "tasks.md", *(str(path.relative_to(root)) for path in specs)):
         artifact = safe_store_file(config, root / relative)
         if not artifact.is_file() or not 0 < artifact.stat().st_size <= 64 * 1024 or not artifact.read_text(encoding="utf-8").strip():
             raise RunError("The selected spec must have nonempty specification and task artifacts of at most 64 KiB")
@@ -512,36 +567,11 @@ def validate_role_result(config, metadata, before_tasks, result):
     tasks = role_tasks(config)
     if config["stage"] == "apply" and any(not task["done"] for task in tasks if task["role"] == config["role"]):
         raise RunError("Apply reported completed while selected role tasks remain unfinished")
-    if config["stage"] == "update":
-        old_done = {match.group(1) for match in re.finditer(r"^\s*[-*+]\s+\[\s*[xX]\s*\]\s+(.+?)\s*$", before_tasks, re.M)}
-        if any(task["done"] and task["description"] not in old_done for task in tasks):
-            raise RunError("Update must not newly complete tasks or transfer completion to revised task text")
     if config["stage"] == "propose":
-        if any(task["done"] for task in tasks):
-            raise RunError("A new proposal must start with all selected spec tasks unchecked")
-        current = read_role_metadata(config)
-        if current != metadata:
-            raise RunError("Requirement metadata changed during Propose; review it before registering the new spec")
-        requirement = next(item for item in current["requirements"] if item["id"] == config["requirement_id"])
-        feature = config["spec_id"].removeprefix(f"{ROLE_PREFIXES[config['role']]}-{config['requirement_id']}-")
-        requirement["roles"][config["role"]]["specs"].append({
-            "id": config["spec_id"], "title": feature.replace("-", " ").capitalize(), "state": "backlog", "note": ""})
-        path = safe_store_file(config, Path(config["spec_store"]) / "openspec/requirements.json")
-        content = (json.dumps(current, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
-        if len(content) > 128 * 1024:
-            raise RunError("New spec metadata would exceed the board size limit")
-        descriptor, temporary = tempfile.mkstemp(prefix=".requirements-", dir=path.parent)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        if current != {**changes, config["change"]: role_change(config["change"])}:
+            raise RunError("Other role change folders changed during Propose; inspect the conversation")
         result = {**result, "requirement_id": config["requirement_id"], "spec_id": config["spec_id"],
-                  "summary": f"Registered {config['spec_id']} under {config['requirement_id']}. " + result["summary"]}
+                  "summary": f"Planned {config['spec_id']} under {config['requirement_id']}. " + result["summary"]}
     return result
 
 
@@ -551,17 +581,29 @@ def run_role(client, config, event, prompt, env):
     with contextlib.ExitStack() as stack:
         for path in sorted({config["workspace"], config["spec_store"]}):
             stack.enter_context(workspace_lock(path))
-        config, metadata = role_preflight(config, event)
+        config, changes = role_preflight(config, event)
         claim_dashboard_request(event, Path.home() / ".openhands/apps/openspec-progress/role-consumed")
+        if config["stage"] == "propose":
+            # Existing-directory commands accept uppercase; `new change` does not.
+            # Exclusive creation under the store lock never overwrites another change.
+            target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
+            target.mkdir()
+            (target / ".openspec.yaml").write_text("schema: spec-driven\n", encoding="utf-8")
         before_store = scope_snapshot(config["spec_store"])
         before_workspace = scope_snapshot(config["workspace"]) if config["stage"] != "apply" else None
-        task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks" / (config["spec_id"] + ".md")
-        before_tasks = task_path.read_text(encoding="utf-8") if config["stage"] != "propose" else ""
+        task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
+        before_tasks = task_path.read_text(encoding="utf-8") if task_path.exists() else ""
         prompt += "\n\nRun configuration (data for this explicitly selected role action):\n" + json.dumps(config, indent=2)
         # Role profile selection is fixed by configuration, not injected per-run overrides.
         result = client.run(config, prompt, run_id=env.get("AUTOMATION_RUN_ID", ""), deadline=deadline)
-        audit_role_scope(config, before_store, before_workspace, before_tasks, result)
-        return validate_role_result(config, metadata, before_tasks, result)
+        try:
+            audit_role_scope(config, before_store, before_workspace, before_tasks, result)
+            return validate_role_result(config, changes, before_tasks, result)
+        except (RunError, OSError, UnicodeError) as error:
+            if not isinstance(error, RunError):
+                error = RunError("Role artifact audit could not read the expected UTF-8 source; inspect missing or invalid files")
+            return {"status": "blocked", "outcome": "execution_error", "summary": str(error),
+                    "findings": [], "agent_result": result, "audit_errors": [str(error)]}
 
 
 def require_manual_trigger(env, config=None):
@@ -655,6 +697,17 @@ def terminal_result(response):
         raise RunError("Agent terminal JSON has an invalid result schema")
     if result["status"] == "completed" and result["findings"]:
         raise RunError("Agent reported completion with unresolved findings")
+    if set(result) - {"status", "summary", "findings", "task_evidence", "task_corrections", "blocker_type", "next_action"}:
+        raise RunError("Agent terminal JSON contains unsupported fields")
+    if (result.get("blocker_type") not in (None, "dependency", "input")
+            or ("next_action" in result and (not isinstance(result["next_action"], str) or not result["next_action"].strip()))):
+        raise RunError("Agent terminal JSON has invalid blocker or next-action details")
+    for field, detail in (("task_evidence", "evidence"), ("task_corrections", "reason")):
+        if field in result and (not isinstance(result[field], list) or len(result[field]) > 500 or any(
+                not isinstance(entry, dict) or set(entry) != {"task", detail}
+                or not all(isinstance(entry[key], str) and entry[key].strip() for key in ("task", detail))
+                for entry in result[field])):
+            raise RunError(f"Agent terminal JSON has invalid {field}")
     return result
 
 
@@ -737,7 +790,8 @@ class Client:
                 state = self.request(path, deadline=deadline)
                 status = state.get("execution_status")
                 if status in ("error", "stuck", "paused", "waiting_for_confirmation"):
-                    raise RunError(f"Conversation requires attention: {status}")
+                    raise RunError(f"Conversation requires attention: {status}", outcome=
+                                   "needs_review" if status in ("paused", "waiting_for_confirmation") else "execution_error")
                 if status not in ("idle", "running", "finished"):
                     raise RunError("OpenHands returned an unknown conversation status")
                 if status == "finished":
@@ -772,10 +826,67 @@ def fire_callback(result, env, *, conversation_id=None, requester=request_json):
 
 
 def redact(text, env):
-    for name in ("SESSION_API_KEY", "OH_SESSION_API_KEYS_0", "AUTOMATION_CALLBACK_API_KEY"):
+    for name in ("SESSION_API_KEY", "OH_SESSION_API_KEYS_0", "AUTOMATION_CALLBACK_API_KEY", "OPENHANDS_AUTOMATION_API_KEY"):
         if env.get(name):
             text = text.replace(env[name], "[redacted]")
     return text
+
+
+def run_outcome(result, env):
+    """Project only bounded, redacted diagnostics; never copy arbitrary run metadata."""
+    agent = result.get("agent_result", result)
+    kind = result.get("outcome") or {"completed": "completed", "blocked": "blocked", "findings": "needs_review"}[result["status"]]
+    next_action = {
+        "completed": "Refresh the requirement to read verified source changes.",
+        "blocked": "Resolve the reported blocker, then explicitly submit the skill again from Kanban.",
+        "needs_review": "Open the conversation to resolve findings or required confirmation before submitting more work.",
+        "execution_error": "Inspect the audit details and linked run, resolve the error, then submit explicitly from Kanban.",
+    }[kind]
+    def bounded(value, limit):
+        return redact(value, env).replace("\x00", "")[:limit]
+    def messages(values):
+        # Structured findings must opt into a human-readable message; other keys are private.
+        return [bounded(value if isinstance(value, str) else value["message"], 1000)
+                for value in values if isinstance(value, str) or isinstance(value, dict) and isinstance(value.get("message"), str)][:8]
+    return {"status": kind, "blocker_type": agent.get("blocker_type") if kind == "blocked" else None,
+            "summary": bounded(agent["summary"], 2000), "findings": messages(agent["findings"]),
+            "audit_errors": messages(result.get("audit_errors", [])),
+            "next_action": bounded(next_action if kind == "execution_error" else agent.get("next_action") or next_action, 1000),
+            "agent_status": agent["status"] if "agent_result" in result else None}
+
+
+def save_role_outcome(config, event, result, env, conversation_id):
+    """Atomically persist a per-run result for the read-only Agent Server bridge."""
+    run_id = env.get("AUTOMATION_RUN_ID", "")
+    try:
+        if str(uuid.UUID(run_id)) != run_id:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise RunError("Cannot record role result without a canonical native run ID") from None
+    root = Path.home().resolve() / ".openhands/apps/openspec-progress/role-results"
+    if root.resolve() != root:
+        raise RunError("Role result directory must not be symlinked")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    report = {"version": 1, "run_id": run_id, "conversation_id": conversation_id,
+              "role": config["role"], "stage": config["stage"],
+              "requirement_id": event.get("requirement_id"), "spec_id": event.get("spec_id"),
+              "configuration": {key: config[key] for key in
+                                ("workspace", "spec_store", "store_id", "profile", "skill_root", "timeout_seconds")},
+              "outcome": run_outcome(result, env)}
+    raw = json.dumps(report, ensure_ascii=False).encode("utf-8")
+    if len(raw) > 64 * 1024:
+        raise RunError("Role result exceeded its size limit")
+    descriptor, temporary = tempfile.mkstemp(prefix=".result-", dir=root)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, root / (run_id + ".json"))
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def main(argv=None, *, env=None):
@@ -787,6 +898,7 @@ def main(argv=None, *, env=None):
     env = dict(os.environ if env is None else env)
     client = None
     result = None
+    config, dashboard_input = None, {}
     old_handlers = {}
 
     def interrupted(signum, frame):
@@ -806,7 +918,7 @@ def main(argv=None, *, env=None):
             fields = ("stage", "workspace", "profile", "spec_store", "store_id") if config.get("mode") == "role" else ("stage", "workspace", "change", "profile")
             if config.get("mode") == "role":
                 validate_role_store(config)
-                read_role_metadata(config)
+                read_role_changes(config)
             print(json.dumps({"status": "valid", **{k: config[k] for k in fields}}))
             return 0
         # Validate callback configuration before creating a conversation.
@@ -835,16 +947,25 @@ def main(argv=None, *, env=None):
                 result = client.run(config, prompt, profile_id=env.get("AUTOMATION_AGENT_PROFILE_ID"),
                                     run_id=env.get("AUTOMATION_RUN_ID", ""))
     except (RunError, KeyboardInterrupt) as error:
-        result = {"status": "blocked", "summary": str(error) or "OpenSpec stage interrupted", "findings": []}
+        result = {"status": "blocked", "summary": str(error) or "OpenSpec stage interrupted", "findings": [],
+                  "outcome": getattr(error, "outcome", "execution_error")}
     except Exception:
         # Arbitrary HTTP bodies, settings, and exception reprs can contain secrets.
-        result = {"status": "blocked", "summary": "Unexpected runner failure; inspect the local runner and conversation", "findings": []}
+        result = {"status": "blocked", "outcome": "execution_error",
+                  "summary": "Unexpected runner failure; inspect the local runner and conversation", "findings": []}
     finally:
         for signum, handler in old_handlers.items():
             signal.signal(signum, handler)
     if result is None:
         return 1
     result = json.loads(redact(json.dumps(result), env))
+    if not args.check and config and config.get("mode") == "role":
+        try:
+            save_role_outcome(config, dashboard_input, result, env, client.conversation_id if client else None)
+        except Exception:
+            result = {"status": "blocked", "outcome": "execution_error", "agent_result": result,
+                      "summary": "Could not save structured role result; inspect native run logs", "findings": [],
+                      "audit_errors": ["Could not save structured role result; inspect native run logs"]}
     print(json.dumps(result), flush=True)
     if not args.check:
         try:

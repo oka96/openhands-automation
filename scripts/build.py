@@ -75,13 +75,19 @@ def expected_files(root: Path) -> dict[Path, str]:
         expected[directory / "automation.yaml"] = json_text({
             "name": f"OpenSpec {role} · {stage.title()}", "state": "ACTIVE", "enabled": True,
             "trigger": {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
-                        "filter": f"schema == 'openspec-role-dashboard/v2' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"},
+                        "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"},
             "entrypoint": "python3 run.py", "timeout": role_config["timeout_seconds"],
             "keep_alive": False, "tarball_source": {"type": "internal"},
         })
         expected[directory / "tarball" / "run.py"] = runtime
         expected[directory / "tarball" / "config.json"] = json_text({**role_config, "mode": "role", "stage": stage, "role": role})
-        expected[directory / "tarball" / "prompt.md"] = f"{role_common}\n\n{prompt}\n"
+        launch = (f"# OpenSpec {role} · {stage.title()}\n\n"
+                  "Start from OpenSpec Kanban: choose a requirement, Role spec and Skill, then submit.\n"
+                  "Native Run now is unsupported because it has no requirement context.\n"
+                  f"Effective role: {role}; skill: {stage}; saved agent profile: {role_config['profile']}; "
+                  f"timeout: {role_config['timeout_seconds']} seconds.\n"
+                  "These settings come from role-workflow.json. The native profile selector does not override them.\n")
+        expected[directory / "tarball" / "prompt.md"] = f"{launch}\n{role_common}\n\n{prompt}\n"
     return expected
 
 
