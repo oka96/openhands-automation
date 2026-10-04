@@ -65,8 +65,9 @@ class RunError(Exception):
         self.outcome = outcome
 
 
-ROLE_LAUNCH_HELP = ("A signed role action event is required. Open OpenSpec Kanban, choose a requirement, "
-                    "Role spec and Skill, then submit there. Native Run now has no requirement context.")
+ROLE_LAUNCH_HELP = ("A signed role action event is required. Follow the role link from OpenSpec Kanban "
+                    "or open the matching role app. Choose a requirement, Role spec and Skill, then submit "
+                    "in that role workspace. Native Run now has no requirement context.")
 
 
 def local_url(value, *, origin_only=True):
@@ -838,9 +839,9 @@ def run_outcome(result, env):
     kind = result.get("outcome") or {"completed": "completed", "blocked": "blocked", "findings": "needs_review"}[result["status"]]
     next_action = {
         "completed": "Refresh the requirement to read verified source changes.",
-        "blocked": "Resolve the reported blocker, then explicitly submit the skill again from Kanban.",
+        "blocked": "Resolve the reported blocker, then explicitly submit the skill again from its role workspace.",
         "needs_review": "Open the conversation to resolve findings or required confirmation before submitting more work.",
-        "execution_error": "Inspect the audit details and linked run, resolve the error, then submit explicitly from Kanban.",
+        "execution_error": "Inspect the audit details and linked run, resolve the error, then submit explicitly from its role workspace.",
     }[kind]
     def bounded(value, limit):
         return redact(value, env).replace("\x00", "")[:limit]

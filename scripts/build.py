@@ -82,7 +82,8 @@ def expected_files(root: Path) -> dict[Path, str]:
         expected[directory / "tarball" / "run.py"] = runtime
         expected[directory / "tarball" / "config.json"] = json_text({**role_config, "mode": "role", "stage": stage, "role": role})
         launch = (f"# OpenSpec {role} · {stage.title()}\n\n"
-                  "Start from OpenSpec Kanban: choose a requirement, Role spec and Skill, then submit.\n"
+                  "Follow the role link from OpenSpec Kanban or open the matching role app. "
+                  "Choose a requirement, Role spec and Skill, then submit in that role workspace.\n"
                   "Native Run now is unsupported because it has no requirement context.\n"
                   f"Effective role: {role}; skill: {stage}; saved agent profile: {role_config['profile']}; "
                   f"timeout: {role_config['timeout_seconds']} seconds.\n"
