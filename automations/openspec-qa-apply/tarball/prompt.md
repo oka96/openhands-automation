@@ -1,8 +1,8 @@
-# OpenSpec QA · Apply
+# QA Workflow · Apply
 
-Follow the role link from OpenSpec Kanban or open the matching role app. Choose a requirement, Role spec and Skill, then submit in that role workspace.
+Follow the role link from OpenSpec Kanban or open QA Workflow. Choose a requirement, Role spec and Automation, then submit in that role workflow.
 Native Run now is unsupported because it has no requirement context.
-Effective role: QA; skill: apply; saved agent profile: codex-acp-demo; timeout: 1800 seconds.
+Effective role: QA; Automation: Apply; saved agent profile: codex-acp-demo; timeout: 1800 seconds.
 These settings come from role-workflow.json. The native profile selector does not override them.
 
 You are executing ONE explicitly submitted OpenSpec role action in OpenHands.

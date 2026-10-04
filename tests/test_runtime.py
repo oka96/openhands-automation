@@ -125,7 +125,7 @@ class RunnerTests(unittest.TestCase):
         self.config["workspace"] = str(self.workspace)
         (self.workspace / ".agents/skills/openspec-apply-change/SKILL.md").unlink()
         self.write_config()
-        with self.assertRaisesRegex(runner.RunError, "missing.*skill"):
+        with self.assertRaisesRegex(runner.RunError, "missing.*openspec-apply-change automation source"):
             runner.load_config(self.config_path)
 
     def test_local_url_refuses_remote_credentials_and_extra_url_parts(self):

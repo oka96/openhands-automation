@@ -42,7 +42,11 @@ class BuildTests(unittest.TestCase):
                                      {**self.role_config, "mode": "role", "stage": stage, "role": role})
                     prompt = (directory / "tarball/prompt.md").read_text()
                     self.assertTrue(prompt.endswith(f"Role boundaries.\n\nRole {stage}.\n"))
-                    self.assertIn(f"Effective role: {role}; skill: {stage}; saved agent profile: codex-acp-demo", prompt)
+                    workflow = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}[role] + " Workflow"
+                    self.assertTrue(prompt.startswith(f"# {workflow} · {stage.title()}\n"))
+                    self.assertIn(f"or open {workflow}.", prompt)
+                    self.assertIn("Role spec and Automation", prompt)
+                    self.assertIn(f"Effective role: {role}; Automation: {stage.title()}; saved agent profile: codex-acp-demo", prompt)
                     self.assertIn("Native Run now is unsupported", prompt)
                     self.assertIn("native profile selector does not override", prompt)
                     self.assertEqual((directory / "tarball/run.py").read_text(), (self.root / "runtime/run.py").read_text())

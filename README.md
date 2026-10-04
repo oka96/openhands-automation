@@ -1,22 +1,24 @@
 # OpenSpec stages in OpenHands
 
-Run **Propose**, **Update**, or **Apply** for SA, Frontend, Backend, or QA from the
-requirement board in `/Users/oka/Desktop/openhands-apps`. Select a requirement,
-role, spec, and action, enter one prompt, and submit. OpenHands starts one native
+Run **Propose**, **Update**, or **Apply** from **SA Workflow**, **FE Workflow**,
+**BE Workflow**, or **QA Workflow**, maintained in `/Users/oka/Desktop/openhands-apps`.
+Follow a role link from OpenSpec Kanban or open a workflow directly. Select a
+requirement, Role spec and Automation, enter one prompt, and submit. Each workflow
+has a fixed role. OpenHands starts one native
 automation run with a linked conversation and visible result. Definitions and
 runtime code live here; the App dispatches them through a signed local event.
 
 There are twelve dedicated automations. Each role (SA, Frontend, Backend, QA) has
-its own Propose, Update and Apply definition, named `OpenSpec <role> · <skill>`.
+its own Propose, Update and Apply definition, named `OpenSpec <role> · <action>`.
 The seven legacy stage definitions and three generic role definitions are retired.
 
 ## Role actions
 
 | Action | User input | Result and boundary |
 | --- | --- | --- |
-| OpenSpec <role> · Propose | Role, new feature slug, prompt | Add one named spec and task file to the selected requirement; no implementation |
-| OpenSpec <role> · Update | Role, existing spec and revision prompt | Revise only that spec and its task planning; no implementation |
-| OpenSpec <role> · Apply | Role, existing spec and optional guidance prompt | Implement and verify only that spec’s tasks; preserve siblings |
+| OpenSpec <role> · Propose | Selected requirement, new feature slug, prompt | Add one named spec and task file to the selected requirement; no implementation |
+| OpenSpec <role> · Update | Selected requirement, existing spec and revision prompt | Revise only that spec and its task planning; no implementation |
+| OpenSpec <role> · Apply | Selected requirement, existing spec and optional guidance prompt | Implement and verify only that spec’s tasks; preserve siblings |
 
 Submitting Update explicitly approves artifact edits needed for the stated
 revision within the selected spec. Submitting Apply authorizes implementation of that spec's current
@@ -34,9 +36,10 @@ Propose uses a feature slug such as `date-validation` to derive a canonical ID:
 `BE-REQ-002-date-validation`, or `QA-REQ-002-date-validation`. It creates tasks only
 for the selected role. At most 20 specs can be registered per requirement.
 
-The fixed deployment configuration is `role-workflow.json`. Kanban displays its
-effective Role, mapped OpenSpec skill, saved agent profile, implementation project,
-spec store, skill source and timeout. Reconnect after editing configuration or
+The fixed deployment configuration is `role-workflow.json`. Each role workspace
+displays its effective Role, Automation, Agent profile, Code project, Spec store,
+Workflow resources and Timeout. Workflow resources identifies the configured
+`skill_root` directory. Reconnect after editing configuration or
 rebuilding bundles. Each native bundle's `prompt.md` also explains its launch
 path and fixed profile; the native profile selector does not override these
 role runners.
@@ -60,14 +63,15 @@ The runner uses the pinned `npx --no-install openspec` CLI with an explicit
 `--store openspec-store` for all change operations. A missing or mismatched store
 registration blocks dispatch.
 
-Install/connect the twelve dedicated role automations from the board's automation setup
-action, then submit a role action from a requirement. A role automation's ordinary
+Install/connect the twelve dedicated role automations with **Connect shared
+automations** in a role workspace, then submit an automation from its requirement
+detail. Setup maintains all twelve definitions across the four workflows. A role automation's ordinary
 zero-input **Run** is intentionally rejected because it lacks a role and request
 context. Setup, refresh, and status checks never start an agent.
 
 ### Results and task corrections
 
-Kanban shows business outcomes independently from native lifecycle: Completed,
+The role workspace shows business outcomes independently from native lifecycle: Completed,
 Waiting for dependency, Blocked (action needed), Needs review, or Execution error.
 Agents report `blocker_type: "dependency"` or `"input"` for a blocked result and
 a concrete `next_action`. Findings and confirmation pauses require review;
@@ -186,7 +190,7 @@ npm run check
 ```
 
 The generator emits exactly twelve bundles and refuses unexpected definitions in
-`automations/`. Reconnect from the board after rebuilding. Setup updates existing
+`automations/`. Reconnect from a role workspace after rebuilding. Setup updates existing
 pair IDs and v2 event filters, preserves the signing source, and never starts a
 conversation. Reconnect after migrating a store and upgrading these bundles;
 obsolete v1 events are rejected.

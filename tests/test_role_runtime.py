@@ -649,6 +649,8 @@ class RoleRunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         client.assert_not_called()
         self.assertIn('OpenSpec Kanban', output)
+        self.assertIn('matching role workflow', output)
+        self.assertIn('Role spec and Automation', output)
         self.assertEqual(self.read_report()['outcome']['status'], 'needs_review')
 
     def test_report_writer_rejects_symlinks_and_invalid_run_ids(self):
