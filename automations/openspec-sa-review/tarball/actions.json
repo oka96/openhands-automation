@@ -2,7 +2,7 @@
   {"id":"propose","label":"Propose","kind":"agent","skill":"openspec-propose","description":"Create a role specification from your requirement and prompt."},
   {"id":"update","label":"Update","kind":"agent","skill":"openspec-update-change","description":"Revise the selected specification and save its before-and-after diff."},
   {"id":"review","label":"Review","kind":"deterministic","skill":null,"description":"Capture an exact spec or code diff for review before delivery."},
-  {"id":"apply","label":"Apply","kind":"agent","skill":"openspec-apply-change","description":"Implement and verify the selected spec tasks. SA verifies design and handoff only."},
+  {"id":"apply","label":"Apply","kind":"agent","skill":"openspec-apply-change","description":"Implement the selected spec tasks. SA prepares its design handoff. Validation stays local."},
   {"id":"commit","label":"Commit","kind":"deterministic","skill":null,"description":"Commit exactly the reviewed changes locally. This action does not push."},
   {"id":"merge-request","label":"Merge Request","kind":"deterministic","skill":null,"description":"Commit the reviewed changes on a new branch, push it and open a GitHub pull request."}
 ]

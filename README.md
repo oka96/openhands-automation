@@ -1,203 +1,152 @@
-# OpenSpec stages in OpenHands
+# OpenSpec role automation
 
-Run **Propose**, **Update**, or **Apply** from **SA Workflow**, **FE Workflow**,
-**BE Workflow**, or **QA Workflow**, maintained in `/Users/oka/Desktop/openhands-apps`.
-Follow a role link from OpenSpec Kanban or open a workflow directly. Select a
-requirement, Role spec and Automation, enter one prompt, and submit. Each workflow
-has a fixed role. OpenHands starts one native
-automation run with a linked conversation and visible result. Definitions and
-runtime code live here; the App dispatches them through a signed local event.
+This repository owns the OpenSpec workflow used by OpenHands Kanban and the SA,
+Frontend, Backend and QA role Apps in `/Users/oka/Desktop/openhands-apps`.
+Each role has six native automations, for **24 definitions** in total.
 
-There are twelve dedicated automations. Each role (SA, Frontend, Backend, QA) has
-its own Propose, Update and Apply definition, named `OpenSpec <role> · <action>`.
-The seven legacy stage definitions and three generic role definitions are retired.
-
-## Role actions
-
-| Action | User input | Result and boundary |
+| Action | Input | Result |
 | --- | --- | --- |
-| OpenSpec <role> · Propose | Selected requirement, new feature slug, prompt | Add one named spec and task file to the selected requirement; no implementation |
-| OpenSpec <role> · Update | Selected requirement, existing spec and revision prompt | Revise only that spec and its task planning; no implementation |
-| OpenSpec <role> · Apply | Selected requirement, existing spec and optional guidance prompt | Implement and verify only that spec’s tasks; preserve siblings |
+| Propose | Requirement, feature name, prompt; application bindings for a new SA requirement | Create one independent role spec with unchecked tasks |
+| Update | Existing role spec and revision prompt | Update its planning and save a before/after diff |
+| Apply | Existing role spec and optional implementation prompt | Implement its tasks in the bound workspace; SA prepares its design handoff |
+| Review | Existing role spec and target (`specs` or `code`) | Save the current diff as an immutable snapshot |
+| Commit | Reviewed snapshot and commit message | Commit exactly those changes locally, without pushing |
+| Merge Request | Reviewed snapshot and PR title | Create a unique branch, commit, push and open a GitHub pull request |
 
-Submitting Update explicitly approves artifact edits needed for the stated
-revision within the selected spec. Submitting Apply authorizes implementation of that spec's current
-planned tasks. Unanswered material questions and changes outside that scope stop
-the run. Completion never launches another action. Done on the board still
-requires SA, Frontend, Backend, and QA to finish.
+The workflow focuses on implementation. Code validation, acceptance checks and
+regression execution stay local. Apply runs them only when explicitly requested
+in the submitted prompt. QA implements regression code in its own repository.
+Unrun checks are never reported as passed and validation-only tasks stay unchecked.
+Review captures a diff; it is not a code-quality verdict. Delivery does not require
+a test-result record. Request, repository scope and snapshot integrity checks
+remain enforced by Automation.
 
-Examples: SA → Propose → `Plan task attachments with size limits and clear failure
-states`; Frontend → Update → `Clarify keyboard focus after a failed save`;
-Backend → Apply → `Follow the existing built-in HTTP conventions`; QA → Apply →
-`Verify keyboard and failed-request scenarios`. Any of the four roles can submit
-any of the three actions. Each requirement can contain several specs per role.
-Propose uses a feature slug such as `date-validation` to derive a canonical ID:
-`SA-REQ-002-date-validation`, `FE-REQ-002-date-validation`,
-`BE-REQ-002-date-validation`, or `QA-REQ-002-date-validation`. It creates tasks only
-for the selected role. At most 20 specs can be registered per requirement.
+## Using a role workflow
 
-The fixed deployment configuration is `role-workflow.json`. Each role workspace
-displays its effective Role, Automation, Agent profile, Code project, Spec store,
-Workflow resources and Timeout. Workflow resources identifies the configured
-`skill_root` directory. Reconnect after editing configuration or
-rebuilding bundles. Each native bundle's `prompt.md` also explains its launch
-path and fixed profile; the native profile selector does not override these
-role runners.
+Open a role from OpenSpec Kanban. Select a requirement and a Role spec, choose a
+node, complete its form and press **Run**. Selecting a node, loading a page,
+reading history or refreshing status never starts an agent. Every submission
+starts one native automation; completion never advances to the next node.
 
-```json
-{
-  "workspace": "/Users/oka/Desktop/openhands-demo",
-  "spec_store": "/Users/oka/Desktop/openspec-store",
-  "store_id": "openspec-store",
-  "skill_root": "/Users/oka/Desktop/openhands-demo",
-  "profile": "codex-acp-demo",
-  "timeout_seconds": 1800,
-  "canvas_url": "http://127.0.0.1:8000"
-}
-```
+SA can create a new requirement from its home page. Enter a canonical requirement
+ID such as `BOOK-002`, a feature name such as `room-booking`, a prompt and the
+impacted applications (ID, display name, role and HTTPS GitHub repository URL).
+SA may cover several repositories. It creates the shared contract and hands code
+implementation to the downstream roles. Frontend and Backend specs reference SA
+and each bind one repository. QA references SA, Frontend and Backend and binds
+one regression repository. Downstream Propose selects an application from SA.
+All later actions preserve the selected spec's `scope.json` and role schema.
 
-The workspace receives implementation changes; the registered store owns the
-planning artifacts in independently scoped role change folders. Existing project-local
-OpenSpec skills are read from `skill_root`; no replacement skills are installed.
-The runner uses the pinned `npx --no-install openspec` CLI with an explicit
-`--store openspec-store` for all change operations. A missing or mismatched store
-registration blocks dispatch.
+Examples: SA Propose `Plan a booking system with room capacity and no overlaps`;
+Backend Update `Add cancellation to the API contract`; Frontend Apply `Implement
+the booking form using the current component conventions`; QA Apply `Implement
+regression coverage for overlap and cancellation, leaving execution local`.
+The same definitions accept different requirements and prompts.
 
-Install/connect the twelve dedicated role automations with **Connect shared
-automations** in a role workspace, then submit an automation from its requirement
-detail. Setup maintains all twelve definitions across the four workflows. A role automation's ordinary
-zero-input **Run** is intentionally rejected because it lacks a role and request
-context. Setup, refresh, and status checks never start an agent.
+Review the **Selected specifications** or **Bound code repository** target. SA
+only offers specifications. Inspect **Reviewed changes**, then choose Commit or
+Merge Request and explicitly select that snapshot. A changed file, mode, branch,
+HEAD or origin requires another Review. Propose, Update and Apply never commit or
+push from a model conversation. Delivery is deterministic and starts no model.
 
-### Results and task corrections
+## Ownership and workspaces
 
-The role workspace shows business outcomes independently from native lifecycle: Completed,
-Waiting for dependency, Blocked (action needed), Needs review, or Execution error.
-Agents report `blocker_type: "dependency"` or `"input"` for a blocked result and
-a concrete `next_action`. Findings and confirmation pauses require review;
-transport, malformed results and audit errors are execution errors. Native
-callbacks still use the supported COMPLETED/FAILED values.
+- `runtime/actions.json`: the shared action catalog, copied into bundles and App presentation metadata.
+- `runtime/control.py`: connection, signing, dispatch, native status and evidence reads.
+- `runtime/collector.cjs`: authoritative read-only Kanban aggregation and scope checks.
+- `runtime/run.py`: event validation, locks, workspace preparation, model conversations and role audits.
+- `runtime/delivery.py`: revision records, Git snapshots and deterministic delivery.
+- `prompts/`: bounded instructions for the three model actions and deterministic action descriptions.
 
-Apply may reopen an originally checked selected task only when `task_corrections`
-contains its exact description and a nonempty `reason`. This corrects unsupported
-illustrative completion without changing task text, structure or siblings. Newly
-completed tasks still require `task_evidence`; pending corrected tasks prevent
-completion. Postflight errors preserve the original agent result alongside
-specific `audit_errors` rather than replacing its blocker with a generic message.
+Apps are visual clients. They contain fixed transport loaders that call the local
+Automation runtime and display its returned data. This repository must therefore
+be available to the Agent Server at `/Users/oka/Desktop/openhands-automation`.
+No workflow business logic is duplicated in the Apps.
 
-The runner atomically records a bounded, credential-redacted result in
-`~/.openhands/apps/openspec-progress/role-results/<run UUID>.json` before its
-completion callback. The bridge checks its run/conversation/role/store bindings
-and exposes only validated display fields and the run's captured configuration.
-Native lifecycle remains authoritative. Older runs, unavailable reports and
-inconsistent records retain native status with a link to the original history;
-existing histories are not rewritten. Full agent diagnostics remain in run logs.
+`role-workflow.json` fixes the store, managed workspace parent, skill root, saved
+profile and timeout. Requests cannot override them. The current deployment uses:
 
-New role conversations carry exactly six native tags: `requirement` (for example,
-`REQ-006`), `role` (`SA`, `Frontend`, `Backend`, or `QA`), `openspecstage` (such as
-`apply`), `openspecspec` (the canonical spec ID), `automationrunid`, and
-`automationtrigger`. Future role and legacy runs omit `openspecchange` and
-`openspecskill`; legacy runs retain their stage and automation origin tags.
+- Store: `/Users/oka/Desktop/openspec-store`, registered as `openspec-store`
+- Workspace parent: `/Users/oka/Desktop/openhands-automation/workspaces`
+- Existing skills: `/Users/oka/Desktop/openhands-demo/.agents/skills`
+- Saved profile: `codex-acp-demo`
+- OpenHands: `http://127.0.0.1:8000`
 
-New conversation names use the plain spec ID, for example
-`SA-REQ-002-date-validation` or `BE-REQ-002-date-validation`.
-The runner saves the title before starting the queued agent message and disables
-automatic title generation. Existing conversation metadata can be normalized
-through the native API by removing a leading bracketed role prefix and only the
-two obsolete tag keys, preserving other tags, messages, and run history.
+Before a code conversation or code review, the runner creates
+`<workspace>/<spec-id>/<application-id>`, clones its bound repository and checks
+the Git root and origin. Subsequent actions reuse the checkout without pulling or
+resetting user changes. The conversation runs in that checkout. SA and spec-only
+deterministic actions use `<workspace>/<spec-id>/planning`; SA never clones or
+changes code. The pinned OpenSpec CLI runs from the registered store, with explicit
+`--store`, so code repositories need no OpenSpec installation.
 
-Use one local OpenHands launcher for the shared automation database. Multiple
-launchers on different ports can share the SQLite queue while keeping packages
-in different storage directories; a competing dispatcher can then fail with a
-missing tarball. Browser and desktop clients should connect to the same backend.
+Scope audits reject edits to siblings, schema bindings and other managed
+checkouts. These controls are not an OS sandbox. Missing upstreams, clone failures
+or mismatched origins prevent conversation startup. Credentials stay in the
+runtime environment and saved profile, never tracked files or event inputs.
 
-Requirements are compiled directly from `openspec/changes/` directory names:
-`<SA|FE|BE|QA>-<PREFIX>-<digits>-<feature>`, for example
-`FE-REQ-003-filters` or `BE-STORY-12-api`. Prefixes contain uppercase letters and
-digits, start with a letter, and have no hyphens; feature names are lowercase
-kebab-case. The exact prefix and digits identify the requirement, preserving
-leading zeroes. A canonical folder name is at most 160 characters. The store
-supports 50 requirements, 20 role changes per requirement and 500 tasks per group.
-Archive and unrelated OpenSpec changes are excluded. No requirement registry is
-read or written, including `requirements.json`.
+## Revisions and delivery receipts
 
-Each role change uses standard `spec-driven` artifacts: `.openspec.yaml`,
-`proposal.md`, `design.md`, `specs/<capability>/spec.md` and `tasks.md`.
-Propose safely creates the new exact folder and schema file while holding both
-locks; the agent supplies its planning artifacts with unchecked tasks. This
-avoids the pinned CLI's lowercase-only `new change` restriction. Existing-folder
-CLI operations support the canonical uppercase names. Refresh discovers the
-result directly. Partial planning remains visible and an explicit Update can
-repair it. Sibling changes provide read-only requirement context.
+Every modifying model run saves the selected spec's before/after diff, including
+partial changes from failed runs. History is scoped by store, role, requirement
+and spec. Private JSON records are stored under
+`~/.openhands/role-delivery/<store-hash>/<spec-id>/{revisions,reviews,deliveries}`.
+The App lists the latest 50 records per kind and fetches a diff only when selected.
+Snapshots are bounded to 200 files and 2 MiB of input content; linked paths and
+submodules cannot be delivered. Binary and mode changes are explicitly displayed.
+A diff includes specification/task changes, not a test execution result.
 
-Optional `## Kanban` bullets in proposal.md can supply Requirement title,
-Requirement summary, Spec title, Owner, Role note, State and Note. These display
-fields never determine identity or completion. Untagged tasks inherit the folder
-role; explicit task role tags must match it.
+Commit uses an isolated index and a verified immutable Git tree. It advances HEAD
+only if the expected old commit still matches, then resets only the committed
+paths in the real index. Unrelated staging remains intact. Repository commit hooks
+are not executed; local validation is a separate activity. A normal configured
+Git author identity is required.
 
-Role requests use source `openspec-role-dashboard`, schema
-`openspec-role-dashboard/v3`, and event type `<stage>.requested`. The exact event
-fields are `schema`, `type`, `stage`, `approval`, `request_id`, `spec_store`,
-`requirement_id`, `context_change`, `role`, `spec_id`, `change`, and `request`. Prompt text
-cannot override configured workspace, store, skill root, profile, or timeout.
-OpenHands delivers custom webhooks as an exact three-field wrapper:
-`{"payload": <signed request>, "source_override": "openspec-role-dashboard",
-"event_key": "<stage>.requested"}`. The runner validates this routing metadata
-before unwrapping the request; raw request delivery remains supported. Unknown
-wrapper fields, wrong sources, and mismatched event keys are rejected.
-Propose and Update require a prompt of at most 10,000 characters; Apply may omit
-guidance. `change` always equals the canonical `spec_id`. Update and Apply also
-require `context_change` to equal that existing folder. Propose requires an unused
-target and an existing context change from the same requirement (any role).
-Current folders are rechecked before dispatch; old v2 events are rejected.
+Merge Request creates `codex/<spec-id>-<review-id-prefix>`, leaves that branch
+checked out, and pushes the exact commit to the reviewed GitHub URL without force.
+It uses the installed `gh` authentication to open a pull request against the branch
+captured by Review. The supplied repositories use GitHub, where an MR is a pull
+request. No automatic merge or deployment follows.
 
-The runner checks the envelope before mutable preflight, locks both store and
-workspace, and consumes each request UUID at most once. It preserves saved
-conversation confirmation/security settings and sends normal lifecycle callbacks.
-After the agent finishes, it audits file scope and validates the change using
-OpenSpec. Propose and Update may edit only the selected change's proposal, design,
-capability specs and tasks; schema configuration, sibling changes, main specs and
-implementation files must remain unchanged. Apply may only change its selected
-change's task checkboxes in the store and must supply concrete
-verification evidence for newly checked tasks. An invalid scope change produces
-a failed run and keeps files available for inspection; it does not silently undo
-user work. These audits and prompts are workflow controls, not an OS sandbox.
+Receipts record `committing`, `committed`, `pushed` and `complete`, with the actual
+commit, branch and PR URL. After a push/PR failure, retry the same snapshot, action
+and message: automation resumes publication and searches for an existing PR to
+avoid duplicates. A completed retry returns its existing receipt. If the commit
+outcome is uncertain or the branch/HEAD moved after partial delivery, inspect Git
+and the receipt before retrying; the runtime does not guess or force-reset work.
 
-Bundles live in `automations/openspec-<role>-<stage>` with lowercase folder names,
-for example `openspec-backend-apply`. Each contains the shared standalone runtime,
-stage prompt, and immutable role/stage configuration. Signed event filters match
-both role and stage; the runtime independently rejects cross-role requests.
+## Events and native results
 
-These definitions target the existing local demo:
+Requests use signed source `openspec-role-dashboard`, schema
+`openspec-role-dashboard/v3` and event `<stage>.requested`. Required fields are
+`schema`, `type`, `stage`, `approval`, `request_id`, `spec_store`, `requirement_id`,
+`context_change`, `role`, `spec_id`, `change`, and `request`. Optional structured
+fields are `application_id` for downstream Propose, `applications` for new SA
+requirements, `target` for Review/delivery, and `review_id`/`message` for delivery.
+New SA intake has empty `context_change`; existing-spec actions must select their
+own folder. Propose/Update require a prompt of at most 10,000 characters.
 
-- Managed workspace parent: `/Users/oka/Desktop/openhands-automation/workspaces`
-- OpenHands Canvas: `http://127.0.0.1:8000`
-- Saved agent profile: `codex-acp-demo`
-- Spec store: `/Users/oka/Desktop/openspec-store`
+The runtime checks native routing metadata and fixed role/stage, locks the store
+and workspace, and consumes each request UUID once. Native zero-input Run is
+unsupported. Canonical folders are
+`openspec/changes/<SA|FE|BE|QA>-<PREFIX>-<digits>-<feature>`; no requirements registry
+is created. Preserve exact prefix/digits and the role's schema. Limits are 50
+requirements, 20 specs per requirement and 500 tasks per requirement.
 
-Each role change uses its own schema (`sa`, `frontend`, `backend`, `qa`) and
-`scope.json` binding. Backend/Frontend reference SA and each bind one repository;
-QA references SA, Frontend and Backend and binds one regression repository.
-Before a conversation starts, the runner creates `<workspace>/<change>/<app-id>`,
-clones the bound HTTPS GitHub repository and verifies its Git root and origin.
-A later action reuses that checkout without pulling or resetting user edits.
-SA runs in `<workspace>/<change>/planning`, never clones code, and verifies only
-design/handoff tasks. The configured workspace is a managed parent, not a product.
-The pinned CLI runs from the spec store. No OpenSpec installation is required in
-sample repositories. Run reports preserve the actual conversation working directory.
-Scope and schema bindings cannot be changed by an action. Propose receives an
-optional application ID selected from SA; URLs and paths are never event overrides.
-Malformed scope, missing upstream references, clone failure and origin mismatch
-prevent conversation startup. Audits reject planning/SA code changes and downstream
-changes to other managed checkouts. These controls are not an OS sandbox.
+Native runs remain the execution history. Bounded, redacted outcomes live under
+`~/.openhands/apps/openspec-progress/role-results/<run-id>.json`. The App shows
+completion, dependency/input blockers, review needs or execution errors without
+rewriting native history. Agent edits and partial failures remain available for
+inspection. Newly checked tasks need concrete implementation evidence; reopening
+an unsupported checked task needs an exact `task_corrections` reason. Pending
+validation tasks are not silently marked complete. Requirement Done remains based
+on all four roles' actual task files.
 
-The automation runner uses OpenHands Agent Server to start a conversation with
-that saved profile. With the current profile, Codex ACP performs the agent work;
-OpenHands manages dispatch, conversations, logs, and run status.
+Model conversations use the spec ID as title and six tags: `requirement`, `role`,
+`openspecstage`, `openspecspec`, `automationrunid`, `automationtrigger`. Review and
+Git delivery are native runs without model conversations.
 
-## Build and verify
-
-Edit `role-workflow.json`, `prompts/role-*.md`, and `runtime/run.py`, then run:
+## Build and connect
 
 ```sh
 npm run build
@@ -205,26 +154,16 @@ npm test
 npm run check
 ```
 
-The generator emits exactly twelve bundles and refuses unexpected definitions in
-`automations/`. Reconnect from a role workspace after rebuilding. Setup updates existing
-pair IDs and v2 event filters, preserves the signing source, and never starts a
-conversation. Reconnect after migrating a store and upgrading these bundles;
-obsolete v1 events are rejected.
+The generator emits all 24 complete bundles under `automations/`. Commit generated
+files alongside sources. **Connect shared automations** installs or updates the
+same role/action IDs and preserves their histories; it adds missing actions and
+starts no agent. Reconnect after changing configuration or rebuilding bundles.
+Use one local OpenHands launcher so dispatchers do not share a queue with different
+tarball storage directories.
 
-## Migration from the legacy definitions
-
-Explicit Connect soft-deletes the seven recognized numbered stages and three
-`OpenSpec Role` definitions, after checking that none has pending or running work.
-It leaves unrelated definitions and stored conversation/run records untouched.
-Connection state upgrades from stage keys to role/stage keys while retaining the
-same signing secret. Interrupted uploads/installations are journaled for recovery.
-
-The exact retired source bundles are backed up in
-`archive/2026-10-04-superseded-automations.tar.gz`, outside the Git Sync folder.
-Historical documentation is in `archive/legacy-workflow.md`. The old runtime test
-cases remain as compatibility coverage; legacy bundles are no longer generated.
-Do not restore the archive into `automations/` alongside the new definitions.
-
-Git Sync should use this repository's `automations/` folder. Commit and push only
-when requested, then sync explicitly; syncing an older remote revision can
-reintroduce obsolete definitions. This local migration does not push or sync Git.
+Connect retires only the seven recognized numbered stages and three generic
+`OpenSpec Role` definitions, after checking for active runs. Their recovery archive
+is `archive/2026-10-04-superseded-automations.tar.gz`; do not restore it under
+`automations/`. Unrelated automations and all historical runs remain untouched.
+Git Sync uses the `automations/` directory. Sync only the intended branch after
+publishing its changes; an older revision can restore obsolete definitions.

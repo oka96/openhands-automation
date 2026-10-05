@@ -788,24 +788,24 @@ def run_role(client, config, event, prompt, env):
             except delivery.DeliveryError as error:
                 raise RunError(str(error), outcome="needs_review") from None
         before_spec = delivery.spec_snapshot(config)
-        if config["stage"] == "propose":
-            # Existing-directory commands accept uppercase; `new change` does not.
-            # Exclusive creation under the store lock never overwrites another change.
-            target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
-            target.mkdir()
-            (target / ".openspec.yaml").write_text("schema: " + ROLE_SCHEMAS[config["role"]] + "\n", encoding="utf-8")
-            (target / "scope.json").write_text(json.dumps(config["scope"], indent=2) + "\n", encoding="utf-8")
-            read_scope(config, config["change"])
-        before_store = scope_snapshot(config["spec_store"])
-        before_workspace = scope_snapshot(config["workspace_parent"])
-        task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
-        before_tasks = task_path.read_text(encoding="utf-8") if task_path.exists() else ""
-        prompt += "\n\nRun configuration (data for this explicitly selected role action):\n" + json.dumps(config, indent=2)
-        if time.monotonic() >= deadline:
-            raise RunError("Workspace preparation exceeded the run timeout; no conversation was started")
-        # Role profile selection is fixed by configuration, not injected per-run overrides.
         result = None
         try:
+            if config["stage"] == "propose":
+                # Existing-directory commands accept uppercase; `new change` does not.
+                # Exclusive creation under the store lock never overwrites another change.
+                target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
+                target.mkdir()
+                (target / ".openspec.yaml").write_text("schema: " + ROLE_SCHEMAS[config["role"]] + "\n", encoding="utf-8")
+                (target / "scope.json").write_text(json.dumps(config["scope"], indent=2) + "\n", encoding="utf-8")
+                read_scope(config, config["change"])
+            before_store = scope_snapshot(config["spec_store"])
+            before_workspace = scope_snapshot(config["workspace_parent"])
+            task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
+            before_tasks = task_path.read_text(encoding="utf-8") if task_path.exists() else ""
+            prompt += "\n\nRun configuration (data for this explicitly selected role action):\n" + json.dumps(config, indent=2)
+            if time.monotonic() >= deadline:
+                raise RunError("Workspace preparation exceeded the run timeout; no conversation was started")
+            # Role profile selection is fixed by configuration, not injected per-run overrides.
             result = client.run(config, prompt, run_id=env.get("AUTOMATION_RUN_ID", ""), deadline=deadline)
             try:
                 audit_role_scope(config, before_store, before_workspace, before_tasks, result)

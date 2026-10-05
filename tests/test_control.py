@@ -151,6 +151,31 @@ class BridgeTests(unittest.TestCase):
     def count(self, route, method):
         return sum(url.split('/api/automation/v1', 1)[1] == route and verb == method for url, verb, *_ in self.calls)
 
+    def test_revision_history_is_passive_and_bound_to_the_selected_role(self):
+        context = {'spec_store': str(self.store), 'role': 'SA', 'requirement_id': 'REQ-001', 'spec_id': 'SA-REQ-001-first'}
+        before = bridge.delivery.spec_snapshot(context)
+        (self.context / context['spec_id'] / 'proposal.md').write_text('# Revised contract\n')
+        revision = bridge.delivery.save_revision({**context, 'stage': 'update'}, before, 'completed', identity())
+        history = self.client.evidence(context)
+        self.assertEqual(history['data']['revisions'][0]['id'], revision['id'])
+        record = self.client.evidence({**context, 'kind': 'revisions', 'id': revision['id']}, record=True)
+        self.assertIn('+ Revised', ' '.join(file['diff'] for file in record['data']['files']).replace('#', ''))
+        self.assertEqual(self.calls, [], 'History must not connect, dispatch or read remote automation state')
+        with self.assertRaises(bridge.BridgeError):
+            self.client.evidence({**context, 'role': 'Backend', 'kind': 'revisions', 'id': revision['id']}, record=True)
+        with self.assertRaises(bridge.BridgeError):
+            self.client.evidence({**context, 'spec_store': str(self.home)})
+
+    def test_new_sa_requirement_event_carries_explicit_applications_and_prompt(self):
+        self.client.setup()
+        value = self.input('propose', 'SA')
+        value.update(requirement_id='BOOK-002', context_change='', spec_id='SA-BOOK-002-booking', change='SA-BOOK-002-booking',
+                     applications=[{'id': 'backend', 'name': 'Backend', 'role': 'Backend', 'repository': 'https://github.com/example/backend.git'}])
+        self.client.dispatch(value)
+        self.assertEqual(self.events[-1]['applications'], value['applications'])
+        self.assertEqual(self.events[-1]['request'], value['request'])
+        self.assertEqual(self.events[-1]['context_change'], '')
+
     def legacy_inventory(self):
         rows = []
         for number, stage in enumerate(('explore', 'propose', 'update', 'apply', 'verify', 'sync', 'archive'), 1):

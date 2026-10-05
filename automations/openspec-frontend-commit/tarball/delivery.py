@@ -120,7 +120,7 @@ def diff_file(name, before, after):
     except UnicodeError:
         binary = True
     status = "added" if before is None else "deleted" if after is None else "modified"
-    patch = f"Binary file {status}: {name}\n" if binary else "".join(difflib.unified_diff(
+    patch = f"Binary file {status}: {name}\n" if binary else "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in difflib.unified_diff(
         old_text.splitlines(keepends=True), new_text.splitlines(keepends=True),
         fromfile="/dev/null" if before is None else "a/" + name,
         tofile="/dev/null" if after is None else "b/" + name))
@@ -312,7 +312,7 @@ def deliver(config, review_id, target, stage, message):
         save_record(config, "deliveries", receipt)
     if stage == "merge-request":
         owner_repo = review["origin"].removeprefix("https://github.com/").removesuffix(".git")
-        git(root, "push", "origin", receipt["commit"] + ":refs/heads/" + receipt["branch"])
+        git(root, "push", review["origin"], receipt["commit"] + ":refs/heads/" + receipt["branch"])
         receipt["state"] = "pushed"
         save_record(config, "deliveries", receipt)
         existing = command(["gh", "pr", "list", "--repo", owner_repo, "--head", receipt["branch"],

@@ -20,7 +20,7 @@ change only their one bound repository. QA refers to SA, Frontend and Backend
 and changes only its regression repository. The scope and schema are immutable
 for this action; report a binding defect for an explicit store correction.
 SA may span many applications but NEVER edits code repositories. SA Apply only
-verifies its design and handoff checklist; code work goes to Backend/Frontend.
+prepares its design handoff; code work goes to Backend/Frontend.
 Do not clone, open a different implementation checkout or switch workspace.
 Apply may implement only that spec's tasks.
 Preserve every role's responsibility and the requirement's four-role Done gate.
@@ -41,15 +41,18 @@ archive changes. Role and requirement identity comes exclusively from the folder
 The exact prefix and digits identify the requirement, including leading zeroes.
 No requirements.json or other registry is needed; never create one.
 Preserve existing user work and report conflicts instead of
-overwriting it. Use existing approved browser access when required; absent browser
-evidence is a blocker, not a passing check. Never weaken acceptance tests.
+overwriting it. Code validation and regression execution stay local, outside the
+OpenHands implementation workflow, unless the submitted prompt requests them.
+Never claim unrun checks passed, complete validation-only tasks without evidence,
+or weaken acceptance tests.
 
 Finish with one final JSON object and no following text:
-{"status":"completed","summary":"Changes and verification evidence","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
+{"status":"completed","summary":"Implemented changes and any pending local validation","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
 Status is completed, blocked, or findings. Only completed with no findings can
 pass. For each newly checked Apply task, include an object in task_evidence with
-its exact OpenSpec task description in `task` and concrete successful commands,
-observed results, and/or browser scenario evidence in `evidence`. Do not fabricate
+its exact OpenSpec task description in `task` and concrete changed files and
+implemented behavior in `evidence`. Include observed check results only for checks
+actually run. Do not fabricate
 evidence. A role action may complete while the other roles remain unfinished.
 For a blocked result, add blocker_type: "dependency" when another implementation
 or prerequisite is missing, or "input" when human input is needed. Include a

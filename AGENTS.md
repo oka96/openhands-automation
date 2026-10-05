@@ -3,9 +3,11 @@
 This repository stores local OpenHands Automation Git Sync definitions. The target
 application is configured in `role-workflow.json`; this repository is not that application.
 
-- Edit `role-workflow.json`, `prompts/`, and `runtime/run.py`,
-  then run `npm run build`. Generate exactly twelve fixed role/skill bundles:
-  SA, Frontend, Backend and QA each have Propose, Update and Apply.
+- Edit `role-workflow.json`, `prompts/`, and `runtime/`,
+  then run `npm run build`. Generate exactly 24 fixed role/action bundles:
+  SA, Frontend, Backend and QA each have Propose, Update, Review, Apply, Commit
+  and Merge Request. Review and delivery are deterministic; the other actions
+  use the saved agent profile.
 - `automations/` contains complete generated bundles required by Git Sync. Commit them.
 - The seven numbered stages and three generic role definitions are retired. Keep
   their recovery archive outside `automations/`; never regenerate or reconnect them.
@@ -28,7 +30,10 @@ application is configured in `role-workflow.json`; this repository is not that a
   revision prompt; that explicit submission authorizes those scoped artifact
   edits without an additional generic per-artifact confirmation, including repair
   of partial planning. Apply implements only the selected change's tasks and
-  checks only tasks with verification evidence. Untagged tasks inherit its role;
+  checks only tasks with concrete implementation evidence. Code validation and
+  regression execution stay local unless the submitted prompt requests them.
+  Leave unrun validation tasks unchecked; do not add validation UI or delivery
+  gates. Untagged tasks inherit its role;
   explicit role tags must agree. Preserve stage boundaries, sibling changes,
   main specs and schema configuration. Optional Kanban Markdown context is display
   data; folder names and task evidence remain authoritative.
@@ -38,7 +43,9 @@ application is configured in `role-workflow.json`; this repository is not that a
   prompts must reuse the target's existing OpenSpec skills.
 - Run `npm test` and `npm run check` before committing.
 - Do not modify the target application while maintaining these definitions.
-- Do not commit or push target-application work from an automation. Each stage
+- Agent conversations must not commit or push. Only explicit deterministic Commit
+  or Merge Request actions may deliver an unchanged reviewed snapshot, within the
+  selected role's scope. SA delivery is restricted to specifications. Each stage
   stops at its stated boundary and reports blockers honestly.
 
 Apps in `apps/` are independent packages, installed separately from Automation Git

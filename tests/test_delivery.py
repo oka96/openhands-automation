@@ -173,6 +173,47 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaisesRegex(delivery.DeliveryError, "no reviewed changes"):
             delivery.deliver(self.config, review["id"], "code", "commit", "Nothing")
 
+    def test_diff_keeps_lines_distinct_without_trailing_newline(self):
+        item = delivery.diff_file("README.md", {"data": b"before", "mode": "100644"}, {"data": b"after", "mode": "100644"})
+        self.assertIn("-before\n\\ No newline at end of file\n+after\n", item["diff"])
+
+    def test_changed_bytes_during_staging_never_advance_head(self):
+        (self.code / "README.md").write_text("Reviewed\n")
+        review = self.review()
+        head = self.git(self.code, "rev-parse", "HEAD")
+        original = delivery.git
+        def race(root, *arguments, **kwargs):
+            if arguments[0] == "add":
+                (self.code / "README.md").write_text("Changed after fingerprint\n")
+            return original(root, *arguments, **kwargs)
+        with patch.object(delivery, "git", side_effect=race):
+            with self.assertRaisesRegex(delivery.DeliveryError, "content changed"):
+                delivery.deliver(self.config, review["id"], "code", "commit", "Must not substitute bytes")
+        self.assertEqual(self.git(self.code, "rev-parse", "HEAD"), head)
+
+    def test_mr_pushes_exact_reviewed_commit_and_recovers_an_existing_pr(self):
+        remote = self.root / "remote.git"
+        self.git(self.root, "init", "--bare", str(remote))
+        (self.code / "README.md").write_text("Reviewed for delivery\n")
+        review = self.review()
+        original = delivery.command
+        pushes = []
+        def local_provider(args, cwd, **kwargs):
+            if args[:2] == ["git", "push"]:
+                self.assertEqual(args[2], review["origin"], "Push must use the reviewed URL, not a mutable pushurl alias")
+                pushes.append(args)
+                return original([*args[:2], str(remote), *args[3:]], cwd, **kwargs)
+            if args[:3] == ["gh", "pr", "list"]:
+                return subprocess.CompletedProcess(args, 0, b'[{"url":"https://github.com/example/backend/pull/42"}]', b"")
+            self.assertNotEqual(args[:3], ["gh", "pr", "create"], "Existing PR must be reused")
+            return original(args, cwd, **kwargs)
+        with patch.object(delivery, "command", side_effect=local_provider):
+            result = delivery.deliver(self.config, review["id"], "code", "merge-request", "Booking implementation")
+        self.assertEqual(self.git(remote, "rev-parse", "refs/heads/" + result["branch"]), result["commit"])
+        self.assertEqual(result["url"], "https://github.com/example/backend/pull/42")
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(self.git(remote, "show", result["commit"] + ":README.md"), "Reviewed for delivery")
+
 
 if __name__ == "__main__":
     unittest.main()

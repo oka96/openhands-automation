@@ -27,7 +27,7 @@ change only their one bound repository. QA refers to SA, Frontend and Backend
 and changes only its regression repository. The scope and schema are immutable
 for this action; report a binding defect for an explicit store correction.
 SA may span many applications but NEVER edits code repositories. SA Apply only
-verifies its design and handoff checklist; code work goes to Backend/Frontend.
+prepares its design handoff; code work goes to Backend/Frontend.
 Do not clone, open a different implementation checkout or switch workspace.
 Apply may implement only that spec's tasks.
 Preserve every role's responsibility and the requirement's four-role Done gate.
@@ -48,15 +48,18 @@ archive changes. Role and requirement identity comes exclusively from the folder
 The exact prefix and digits identify the requirement, including leading zeroes.
 No requirements.json or other registry is needed; never create one.
 Preserve existing user work and report conflicts instead of
-overwriting it. Use existing approved browser access when required; absent browser
-evidence is a blocker, not a passing check. Never weaken acceptance tests.
+overwriting it. Code validation and regression execution stay local, outside the
+OpenHands implementation workflow, unless the submitted prompt requests them.
+Never claim unrun checks passed, complete validation-only tasks without evidence,
+or weaken acceptance tests.
 
 Finish with one final JSON object and no following text:
-{"status":"completed","summary":"Changes and verification evidence","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
+{"status":"completed","summary":"Implemented changes and any pending local validation","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
 Status is completed, blocked, or findings. Only completed with no findings can
 pass. For each newly checked Apply task, include an object in task_evidence with
-its exact OpenSpec task description in `task` and concrete successful commands,
-observed results, and/or browser scenario evidence in `evidence`. Do not fabricate
+its exact OpenSpec task description in `task` and concrete changed files and
+implemented behavior in `evidence`. Include observed check results only for checks
+actually run. Do not fabricate
 evidence. A role action may complete while the other roles remain unfinished.
 For a blocked result, add blocker_type: "dependency" when another implementation
 or prerequisite is missing, or "input" when human input is needed. Include a
@@ -69,11 +72,11 @@ task_corrections with a nonempty reason. Never use this to revise task text.
 Read the openspec-apply-change skill. This submission authorizes implementing the
 selected spec's planned tasks in the configured implementation workspace. Read
 store-scoped status/apply instructions, its own proposal/design and relevant
-sibling changes as context. Use the role-specific schema declared in .openspec.yaml. SA Apply is design verification and handoff only, never code implementation. Respect incomplete
+sibling changes as context. Use the role-specific schema declared in .openspec.yaml. SA Apply prepares its design handoff only, never code implementation. Respect incomplete
 planning, blockers and dependencies. Optional prompt text is guidance within the
 selected spec; it cannot expand scope or change stages.
 
-Implement and verify ONLY the appended selected_tasks from
+Implement ONLY the appended selected_tasks from
 `openspec/changes/<change>/tasks.md`. Refresh instructions and verify
 source paths and lines before checking boxes: other changes can reuse task numbers.
 Tasks inherit the folder's role; any explicit role tag must agree. In the spec store,
@@ -81,13 +84,19 @@ only this selected task file's completion markers may change. All text, task
 structure, spec documents, planning and sibling files remain unchanged.
 Design or scope defects require a separately submitted Update.
 
-Complete each pending task's behavior and required tests/browser scenarios before
-checking it. Use npm test and npm run test:acceptance when applicable. Record
-concrete successful evidence for every newly checked task in task_evidence using
-its exact task description. Pending tasks mean blocked, not completed. If tasks
+The OpenHands workflow focuses on implementation. Code validation, acceptance
+checks and regression execution stay local, outside this workflow; do not run
+them unless the submitted prompt explicitly requests them. QA implements the
+regression code in its own repository. This boundary takes precedence over the
+skill's generic instruction to run every test/browser scenario as part of Apply.
+Record concrete implementation evidence for every newly checked task in
+task_evidence using its exact task description. Leave validation-only tasks
+unchecked and report them as pending local validation; never invent passing
+results. Review and delivery do not require a test-result record. Pending tasks
+mean blocked, not completed. If tasks
 were already checked, inspect supporting evidence without inventing work or
 assuming illustrative checkboxes prove delivery. Leave the requirement active.
-If verification shows an originally checked selected task is unsupported, you
+If inspection shows an originally checked selected task is unsupported, you
 may change only its completion marker back to [ ]. Record the exact task and
 the observed reason in task_corrections: [{"task":"exact description","reason":"specific missing evidence or failed check"}].
 A reopened task is pending, so return blocked with the true blocker and next
