@@ -6,8 +6,10 @@ role-specific schema. The supplied change equals spec_id and determines
 the requirement and role. Do not run `openspec new change`: the pinned command
 rejects uppercase creation names although other commands support these folders.
 
-Read the existing context_change and relevant related_changes as read-only
-requirement context. Run status and schema instructions for the NEW selected
+When context_change is nonempty, read it and relevant related_changes as read-only
+requirement context. An empty context_change is a new SA requirement: start from
+the submitted prompt and the runner-created scope.json application bindings;
+there is no earlier change to read. Run status and schema instructions for the NEW selected
 change with --store <store_id>. Create its own proposal.md, design.md,
 specs/<spec_id>/spec.md and tasks.md. Use the submitted prompt to draft observable
 requirements and scenarios, plus nonempty, initially unchecked tasks. Tasks
