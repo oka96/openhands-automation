@@ -3,7 +3,7 @@
 Read the openspec-apply-change skill. This submission authorizes implementing the
 selected spec's planned tasks in the configured implementation workspace. Read
 store-scoped status/apply instructions, its own proposal/design and relevant
-sibling changes as context. Use the standard spec-driven schema. Respect incomplete
+sibling changes as context. Use the role-specific schema declared in .openspec.yaml. SA Apply is design verification and handoff only, never code implementation. Respect incomplete
 planning, blockers and dependencies. Optional prompt text is guidance within the
 selected spec; it cannot expand scope or change stages.
 

@@ -57,7 +57,12 @@ class RoleRunnerTests(unittest.TestCase):
         root = self.change_path(spec_id)
         directory = root / "specs" / spec_id
         directory.mkdir(parents=True, exist_ok=True)
-        (root / ".openspec.yaml").write_text("schema: spec-driven\n")
+        (root / ".openspec.yaml").write_text("schema: " + runner.ROLE_SCHEMAS[role] + "\n")
+        apps = [{"id": r.lower(), "name": r, "role": r, "repository": "https://github.com/example/" + r.lower() + ".git"} for r in ("Frontend", "Backend", "QA")]
+        requirement = runner.role_change(spec_id)["requirement_id"]
+        refs = [f"{runner.ROLE_PREFIXES[r]}-{requirement}-first" for r in runner.UPSTREAM_ROLES[role]]
+        if not (root / "scope.json").exists():
+            (root / "scope.json").write_text(json.dumps({"version": 1, "applications": apps if role == "SA" else [a for a in apps if a["role"] == role], "references": refs}))
         for file in ("proposal.md", "design.md"):
             (root / file).write_text("# Planning\n\nSelected role context.\n")
         (directory / "spec.md").write_text("# Spec\n\nSelected feature behavior.\n")
@@ -94,7 +99,7 @@ class RoleRunnerTests(unittest.TestCase):
         if arguments[0] == "validate":
             return {"items": [{"id": config["change"], "valid": True}]}
         if arguments[0] == "status":
-            return {"isPlanningComplete": True, "schemaName": "spec-driven"}
+            return {"isPlanningComplete": True, "schemaName": runner.ROLE_SCHEMAS[config["role"]]}
         tasks = []
         for path in (self.change_path(config["change"]) / "tasks.md",):
             if not path.exists():
@@ -123,8 +128,17 @@ class RoleRunnerTests(unittest.TestCase):
             result["task_evidence"] = [{"task": task["description"], "evidence": "Required fixture scenario passed"} for task in tasks]
         return result
 
+    def fake_git(self, arguments, *, cwd, timeout=120):
+        if arguments[0] == "clone":
+            (Path(arguments[-1]) / ".git").mkdir(parents=True)
+            return ""
+        if arguments[0] == "rev-parse":
+            return cwd
+        return "https://github.com/example/" + Path(cwd).name + ".git"
+
     def invoke(self, action=None, *, check=False):
-        with mock.patch.object(runner, "role_cli", side_effect=self.fake_cli), \
+        with mock.patch.object(runner, "git_command", side_effect=self.fake_git), \
+                mock.patch.object(runner, "role_cli", side_effect=self.fake_cli), \
                 mock.patch.object(runner.Path, "home", return_value=self.root), \
                 mock.patch.object(runner, "Client") as client, mock.patch.object(runner, "fire_callback") as callback, \
                 contextlib.redirect_stdout(io.StringIO()) as output:
@@ -147,7 +161,7 @@ class RoleRunnerTests(unittest.TestCase):
                     prefix = f"openspec/changes/{event['spec_id']}/"
                     allowed = {prefix + f"specs/{event['spec_id']}/spec.md", prefix + "tasks.md"}
                     if stage == "propose":
-                        allowed.update(prefix + name for name in ("proposal.md", "design.md", ".openspec.yaml"))
+                        allowed.update(prefix + name for name in ("proposal.md", "design.md", ".openspec.yaml", "scope.json"))
                     self.assertFalse(self.metadata_path.exists())
                     self.assertLessEqual(runner.changed_paths(before, runner.scope_snapshot(self.store)), allowed)
                     self.assertEqual((self.workspace / "app.js").read_text(), "original implementation\n")
@@ -268,7 +282,7 @@ class RoleRunnerTests(unittest.TestCase):
         self.set_event("propose", "SA")
         self.assertEqual(self.invoke(lambda *a, **k: {**SUCCESS, "status": "blocked"})[0], 1)
         self.assertFalse(self.metadata_path.exists())
-        self.assertEqual((self.change / '.openspec.yaml').read_text(), 'schema: spec-driven\n')
+        self.assertEqual((self.change / '.openspec.yaml').read_text(), 'schema: ' + runner.ROLE_SCHEMAS[self.config['role']] + '\n')
         self.assertIn(self.event['spec_id'], runner.read_role_changes(self.config))
 
     def test_planning_cannot_edit_siblings_configuration_or_implementation(self):
@@ -393,7 +407,7 @@ class RoleRunnerTests(unittest.TestCase):
                 self.set_event(stage, "SA")
                 code, output, client, _ = self.invoke()
                 self.assertEqual(code, 1)
-                self.assertIn("spec-driven schema", output)
+                self.assertIn("schema must match", output)
                 client.return_value.run.assert_not_called()
 
     def test_propose_cannot_complete_a_task_file_without_its_specification(self):
@@ -415,6 +429,7 @@ class RoleRunnerTests(unittest.TestCase):
         self.assertFalse((self.root / ".openhands").exists())
 
     def test_non_req_prefix_and_short_numeric_id_are_routed_from_folders(self):
+        self.create_spec('SA-STORY-12-first', 'SA')
         selected = 'FE-STORY-12-api'
         self.create_spec(selected, 'Frontend')
         self.set_event('apply', 'Frontend')
@@ -555,7 +570,7 @@ class RoleRunnerTests(unittest.TestCase):
         with mock.patch.object(runner.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=b'{"stores": []}')) as run:
             runner.role_cli(self.config, "store", "list", "--json")
         self.assertEqual(run.call_args.args[0], ["npx", "--no-install", "openspec", "store", "list", "--json"])
-        self.assertEqual(run.call_args.kwargs["cwd"], str(self.workspace))
+        self.assertEqual(run.call_args.kwargs["cwd"], str(self.store))
         self.assertNotIn("shell", run.call_args.kwargs)
 
     def read_report(self):
@@ -662,6 +677,108 @@ class RoleRunnerTests(unittest.TestCase):
             (root / 'role-results').symlink_to(self.workspace, target_is_directory=True)
             with self.assertRaisesRegex(runner.RunError, 'symlinked'):
                 runner.save_role_outcome(self.config, self.event, SUCCESS, self.env, None)
+
+    # Exercise managed workspaces independently of the model/network.
+    def test_sa_apply_rejects_code_changes_and_never_clones(self):
+        def edit_code(config, prompt, **kwargs):
+            self.assertTrue(config['workspace'].endswith('/planning'))
+            (self.workspace / 'app.js').write_text('forbidden SA implementation')
+            return self.execute_action(config, prompt, **kwargs)
+        with mock.patch.object(self, 'fake_git', side_effect=AssertionError('SA must never clone')):
+            code, output, _, _ = self.invoke(edit_code)
+        self.assertEqual(code, 1)
+        self.assertIn('SA changed implementation files', output)
+
+    def test_downstream_conversation_and_report_use_bound_checkout(self):
+        self.set_event('apply', 'Backend')
+        expected = str(self.workspace / self.event['change'] / 'backend')
+        def apply(config, prompt, **kwargs):
+            self.assertEqual(config['workspace'], expected)
+            self.assertEqual(config['scope']['references'], [self.spec_id('SA')])
+            (Path(config['workspace']) / 'server.js').write_text('allowed implementation')
+            return self.execute_action(config, prompt, **kwargs)
+        code, output, _, _ = self.invoke(apply)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.read_report()['configuration']['workspace'], expected)
+
+    def test_downstream_cannot_edit_a_sibling_repository(self):
+        self.set_event('apply', 'Backend')
+        def apply(config, prompt, **kwargs):
+            (self.workspace / 'app.js').write_text('wrong repository')
+            return self.execute_action(config, prompt, **kwargs)
+        code, output, _, _ = self.invoke(apply)
+        self.assertEqual(code, 1)
+        self.assertIn('another repository', output)
+
+    def test_clone_failure_prevents_conversation_and_preserves_store(self):
+        self.set_event('apply', 'Backend')
+        before = runner.scope_snapshot(self.store)
+        with mock.patch.object(self, 'fake_git', side_effect=runner.RunError('clone failed')):
+            code, _, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        client.return_value.run.assert_not_called()
+        self.assertEqual(before, runner.scope_snapshot(self.store))
+
+    def test_scope_failures_prevent_clone_and_conversation(self):
+        self.set_event('apply', 'QA')
+        path = self.change / 'scope.json'
+        original = path.read_text()
+        for mutate in [lambda scope: scope['applications'].append(scope['applications'][0]),
+                       lambda scope: scope['references'].pop(),
+                       lambda scope: scope['references'].append('SA-OTHER-1-contract'),
+                       lambda scope: scope['applications'][0].update(repository='https://secret@github.com/example/qa.git'),
+                       lambda scope: scope['applications'][0].update(repository='file:///tmp/repo')]:
+            scope = json.loads(original); mutate(scope); path.write_text(json.dumps(scope))
+            with mock.patch.object(self, 'fake_git', side_effect=AssertionError('invalid scope must not clone')):
+                code, _, client, _ = self.invoke()
+            self.assertEqual(code, 1)
+            client.return_value.run.assert_not_called()
+        path.unlink()
+        code, output, client, _ = self.invoke()
+        self.assertEqual(code, 1)
+        self.assertIn('scope.json', output)
+        client.return_value.run.assert_not_called()
+
+    def test_real_git_clone_reuse_and_origin_mismatch(self):
+        import subprocess
+        source = self.root / 'source'
+        source.mkdir()
+        subprocess.run(['git', 'init', '-q', str(source)], check=True)
+        (source / 'README.md').write_text('fixture')
+        subprocess.run(['git', '-C', str(source), 'add', '.'], check=True)
+        subprocess.run(['git', '-C', str(source), '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture'], check=True)
+        self.set_event('apply', 'Backend')
+        config = {**self.config, 'change': self.event['change'], 'scope': runner.read_scope(self.config, self.event['change'])}
+        original = runner.git_command
+        clones = []
+        def local_clone(arguments, *, cwd, timeout=120):
+            if arguments[0] == 'clone':
+                clones.append(arguments)
+                result = original(['clone', '--', str(source), arguments[-1]], cwd=cwd)
+                original(['remote', 'set-url', 'origin', arguments[-2]], cwd=arguments[-1])
+                return result
+            return original(arguments, cwd=cwd, timeout=timeout)
+        with mock.patch.object(runner, 'git_command', side_effect=local_clone):
+            target = Path(runner.prepare_role_workspace(config))
+            (target / 'unfinished.js').write_text('preserve user edits')
+            again = {**self.config, 'change': self.event['change'], 'scope': config['scope']}
+            self.assertEqual(runner.prepare_role_workspace(again), str(target))
+            self.assertEqual((target / 'unfinished.js').read_text(), 'preserve user edits')
+            self.assertEqual(len(clones), 1)
+            original(['remote', 'set-url', 'origin', 'https://github.com/other/wrong.git'], cwd=str(target))
+            with self.assertRaisesRegex(runner.RunError, 'origin does not match'):
+                runner.prepare_role_workspace({**self.config, 'change': self.event['change'], 'scope': config['scope']})
+            self.assertEqual((target / 'unfinished.js').read_text(), 'preserve user edits')
+
+    def test_symlinked_checkout_fails_before_git(self):
+        self.set_event('apply', 'Backend')
+        config = {**self.config, 'change': self.event['change'], 'scope': runner.read_scope(self.config, self.event['change'])}
+        directory = self.workspace / self.event['change']; directory.mkdir()
+        (directory / 'backend').symlink_to(self.store)
+        with mock.patch.object(runner, 'git_command') as git:
+            with self.assertRaisesRegex(runner.RunError, 'symlink'):
+                runner.prepare_role_workspace(config)
+        git.assert_not_called()
 
 
 if __name__ == "__main__":

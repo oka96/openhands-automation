@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -197,12 +198,12 @@ def load_role_config(config):
         if not isinstance(value, str) or not Path(value).is_absolute() or ".local" in Path(value).parts:
             raise RunError(f"Role {key} must be an absolute directory outside .local")
         path = Path(value).resolve()
-        if not path.is_dir() or ".local" in path.parts:
+        if (key != "workspace" and not path.is_dir()) or ".local" in path.parts or path != Path(value):
             raise RunError(f"Role {key} directory is unavailable")
         config[key] = str(path)
-    if config["workspace"] == config["spec_store"]:
-        raise RunError("Role spec store and implementation workspace must be separate")
-    for key in ("workspace", "spec_store"):
+    if Path(config["workspace"]) == Path(config["spec_store"]) or Path(config["workspace"]) in Path(config["spec_store"]).parents or Path(config["spec_store"]) in Path(config["workspace"]).parents:
+        raise RunError("Role spec store and managed workspace parent must be separate non-overlapping directories")
+    for key in ("spec_store",):
         if not (Path(config[key]) / "openspec").is_dir():
             raise RunError(f"Role {key} must already contain an OpenSpec project")
     if not isinstance(config["store_id"], str) or not CHANGE_NAME.fullmatch(config["store_id"]):
@@ -243,11 +244,13 @@ def require_role_trigger(env, config):
                 or event["event_key"] != f"{stage}.requested"):
             raise RunError("Invalid native role event wrapper; source and event key must match this action")
         event = event["payload"]
-    if (not isinstance(event, dict) or set(event) != ROLE_EVENT_FIELDS
+    if (not isinstance(event, dict) or not ROLE_EVENT_FIELDS <= set(event) or set(event) - ROLE_EVENT_FIELDS - {"application_id"}
             or event.get("schema") != "openspec-role-dashboard/v3"
             or event.get("stage") != stage or event.get("approval") != stage
             or event.get("type") != f"{stage}.requested" or event.get("role") != role):
         raise RunError("Invalid role action event; submit an explicit role and stage")
+    if "application_id" in event and (not isinstance(event["application_id"], str) or len(event["application_id"]) > 80 or event["application_id"] and not CHANGE_NAME.fullmatch(event["application_id"])):
+        raise RunError("Invalid application selection")
     if event["spec_store"] != config["spec_store"]:
         raise RunError("Role event spec store must match this automation's configured store")
     if not isinstance(event["requirement_id"], str) or not re.fullmatch(r"[A-Z][A-Z0-9]*-[0-9]+", event["requirement_id"]):
@@ -274,7 +277,7 @@ def role_cli(config, *arguments):
     """Use only the project's installed CLI; never download or invoke a shell."""
     try:
         completed = subprocess.run(["npx", "--no-install", "openspec", *arguments],
-                                   cwd=config["workspace"], capture_output=True, timeout=20, check=False)
+                                   cwd=config["spec_store"], capture_output=True, timeout=20, check=False)
         if completed.returncode or len(completed.stdout) > 1_000_000:
             raise RunError("Pinned OpenSpec CLI check failed; inspect the selected store and change")
         value = json.loads(completed.stdout)
@@ -405,6 +408,148 @@ def role_tasks(config, *, require_ready=True):
     return selected
 
 
+ROLE_SCHEMAS = {"SA": "sa", "Frontend": "frontend", "Backend": "backend", "QA": "qa"}
+UPSTREAM_ROLES = {"SA": [], "Frontend": ["SA"], "Backend": ["SA"], "QA": ["SA", "Frontend", "Backend"]}
+
+
+def read_scope(config, name, seen=None):
+    identity = role_change(name)
+    seen = set(seen or ())
+    if not identity or name in seen:
+        raise RunError("Invalid or cyclic repository scope")
+    seen.add(name)
+    metadata = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / name / ".openspec.yaml")
+    try:
+        if metadata.stat().st_size > 65536 or not re.search(r"^schema:\s*" + ROLE_SCHEMAS[identity["role"]] + r"\s*$", metadata.read_text(encoding="utf-8"), re.M):
+            raise ValueError()
+    except (OSError, ValueError, UnicodeError):
+        raise RunError(f"{name}: schema must match its role") from None
+    path = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / name / "scope.json")
+    try:
+        if not path.is_file() or path.stat().st_size > 65536:
+            raise ValueError()
+        scope = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        raise RunError(f"{name}: missing or invalid scope.json; define repository bindings before running") from None
+    if not isinstance(scope, dict) or set(scope) != {"version", "applications", "references"} or type(scope["version"]) is not int or scope["version"] != 1:
+        raise RunError("Invalid scope.json fields or version")
+    apps, refs = scope["applications"], scope["references"]
+    role = identity["role"]
+    if not isinstance(apps, list) or not 1 <= len(apps) <= 20 or role != "SA" and len(apps) != 1:
+        raise RunError("Downstream specs require exactly one repository; SA supports 1 to 20")
+    for app in apps:
+        if (not isinstance(app, dict) or set(app) != {"id", "name", "role", "repository"}
+                or not isinstance(app["id"], str) or len(app["id"]) > 80 or not CHANGE_NAME.fullmatch(app["id"])
+                or not isinstance(app["name"], str) or not 1 <= len(app["name"].strip()) <= 200 or re.search(r"[\x00-\x1f]", app["name"])
+                or app["role"] not in ("Frontend", "Backend", "QA") or role != "SA" and app["role"] != role
+                or not isinstance(app["repository"], str) or len(app["repository"]) > 500
+                or not re.fullmatch(r"https://github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.git", app["repository"])):
+            raise RunError("Invalid application binding or HTTPS GitHub repository")
+    if len({app["id"] for app in apps}) != len(apps) or len({app["repository"].lower() for app in apps}) != len(apps):
+        raise RunError("Duplicate application or repository binding")
+    required = UPSTREAM_ROLES[role]
+    if not isinstance(refs, list) or len(refs) > 20 or any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+        raise RunError("Invalid upstream references")
+    sources = []
+    for ref in refs:
+        source = role_change(ref)
+        if not source or source["requirement_id"] != identity["requirement_id"] or source["role"] not in required:
+            raise RunError("Upstream reference must have a required role in the same requirement")
+        sources.append((source["role"], read_scope(config, ref, seen)))
+    if any(not any(source_role == needed for source_role, _ in sources) for needed in required):
+        raise RunError("Missing required upstream role reference")
+    if role != "SA" and not any(apps[0] in source["applications"] for source_role, source in sources if source_role == "SA"):
+        raise RunError("Repository binding is not declared by referenced SA")
+    if role == "QA":
+        sa = {ref for ref in refs if role_change(ref)["role"] == "SA"}
+        if any(not sa.intersection(source["references"]) for source_role, source in sources if source_role != "SA"):
+            raise RunError("QA implementation references must share the referenced SA contract")
+    return scope
+
+
+def proposed_scope(config, changes, application_id=""):
+    context = read_scope(config, config["context_change"])
+    role = config["role"]
+    if role_change(config["context_change"])["role"] == role and (not application_id or context["applications"][0]["id"] == application_id):
+        return context
+    apps = [app for app in context["applications"] if role == "SA" or app["role"] == role]
+    # Context may be a single downstream spec. SA supplies the authoritative apps.
+    related = [name for name, value in changes.items() if value["requirement_id"] == config["requirement_id"]]
+    sa = [name for name in related if changes[name]["role"] == "SA"]
+    if role != "SA":
+        declared = {}
+        for name in sa:
+            for app in read_scope(config, name)["applications"]:
+                if app["role"] != role:
+                    continue
+                if app["id"] in declared and declared[app["id"]] != app:
+                    raise RunError("Conflicting SA application bindings; resolve them before proposing a spec")
+                declared[app["id"]] = app
+        apps = list(declared.values())
+        if application_id:
+            apps = [app for app in apps if app["id"] == application_id]
+        if len(apps) != 1:
+            raise RunError("Select one impacted application for this new role spec")
+    if role == "SA" and sa:
+        apps = list({app["id"]: app for name in sa for app in read_scope(config, name)["applications"]}.values())
+    refs = [name for name in related if changes[name]["role"] in UPSTREAM_ROLES[role]]
+    if any(not any(changes[name]["role"] == required for name in refs) for required in UPSTREAM_ROLES[role]):
+        raise RunError("Create the required upstream role specs before proposing this role")
+    return {"version": 1, "applications": apps, "references": refs}
+
+
+def managed_directory(parent, name):
+    parent = Path(parent)
+    if parent.is_symlink() or parent.resolve() != parent or ".local" in parent.parts:
+        raise RunError("Managed workspace parent must not contain symlinks or .local")
+    target = parent / name
+    if target.is_symlink() or target.resolve() != target:
+        raise RunError("Managed workspace must not be symlinked")
+    return target
+
+
+def git_command(arguments, *, cwd, timeout=120):
+    try:
+        result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *arguments], cwd=cwd,
+                                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, capture_output=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RunError("Repository clone or verification failed or timed out; no conversation was started") from None
+    if result.returncode:
+        raise RunError("Repository clone or verification failed; check access and retry before starting a conversation")
+    return result.stdout.decode("utf-8").strip()
+
+
+def prepare_role_workspace(config):
+    parent = Path(config["workspace"])
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = managed_directory(parent, config["change"])
+    directory.mkdir(exist_ok=True)
+    if config["role"] == "SA":
+        target = managed_directory(directory, "planning")
+        target.mkdir(exist_ok=True)
+    else:
+        app = config["scope"]["applications"][0]
+        target = managed_directory(directory, app["id"])
+        if not target.exists():
+            # Clone into a fresh sibling then rename; failed clones never look reusable.
+            temporary = directory / (".clone-" + str(uuid.uuid4()))
+            try:
+                git_command(["clone", "--", app["repository"], str(temporary)], cwd=str(directory))
+                temporary.rename(target)
+            finally:
+                if temporary.exists():
+                    shutil.rmtree(temporary)
+        if not (target / ".git").is_dir() or (target / ".git").is_symlink():
+            raise RunError("Managed checkout must be a standalone Git repository")
+        if git_command(["rev-parse", "--show-toplevel"], cwd=str(target)) != str(target):
+            raise RunError("Managed checkout root does not match the selected repository")
+        if git_command(["remote", "get-url", "origin"], cwd=str(target)) != app["repository"]:
+            raise RunError("Managed checkout origin does not match this spec; preserve it and resolve the mismatch")
+    config["workspace_parent"] = str(parent)
+    config["workspace"] = str(target)
+    return str(target)
+
+
 def role_preflight(config, event):
     """Validate effective event inputs and current associations under both locks."""
     config = {**config, **{key: event[key] for key in ("change", "context_change", "requirement_id", "spec_id", "request")},
@@ -424,12 +569,14 @@ def role_preflight(config, event):
             raise RunError("The proposed spec already exists; choose a new unused feature name")
         if sum(item["requirement_id"] == config["requirement_id"] for item in changes.values()) >= 20:
             raise RunError("The requirement's 20 spec limit has been reached")
+        config["scope"] = proposed_scope(config, changes, event.get("application_id", ""))
     else:
         if changes.get(config["change"]) != role_change(config["spec_id"]):
             raise RunError("The selected requirement/role/spec association has changed; refresh the board")
         status = role_cli(config, "status", "--change", config["change"], "--store", config["store_id"], "--json")
-        if status.get("schemaName") != "spec-driven":
-            raise RunError("Role changes must use the standard spec-driven schema")
+        if status.get("schemaName") != ROLE_SCHEMAS[config["role"]]:
+            raise RunError("Role change schema must match its folder role")
+        config["scope"] = read_scope(config, config["change"])
         for entry in target.rglob("*"):
             safe_store_file(config, entry)
         if config["stage"] == "apply":
@@ -488,8 +635,16 @@ def audit_role_scope(config, before_store, before_workspace, before_tasks, resul
         raise RunError("Role action changed files outside its permitted store scope; inspect the conversation and preserve recovery evidence")
     for entry in (Path(config["spec_store"]) / prefix).rglob("*"):
         safe_store_file(config, entry)
-    if config["stage"] != "apply" and scope_snapshot(config["workspace"]) != before_workspace:
-        raise RunError("Planning action changed implementation files; inspect the conversation before continuing")
+    parent = config.get("workspace_parent", config["workspace"])
+    after_workspace = scope_snapshot(parent)
+    workspace_changes = changed_paths(before_workspace, after_workspace)
+    if config["stage"] != "apply" or config["role"] == "SA":
+        if workspace_changes:
+            raise RunError("Planning action or SA changed implementation files; inspect the conversation before continuing")
+    else:
+        prefix_workspace = str(Path(config["workspace"]).relative_to(parent)) + "/"
+        if any(not path.startswith(prefix_workspace) for path in workspace_changes):
+            raise RunError("Apply changed another repository outside its selected workspace")
     if config["stage"] != "apply":
         path = safe_store_file(config, Path(config["spec_store"]) / task_path)
         if path.exists():
@@ -547,6 +702,7 @@ def audit_role_scope(config, before_store, before_workspace, before_tasks, resul
 def validate_role_result(config, changes, before_tasks, result):
     if result["status"] != "completed":
         return result
+    read_scope(config, config["change"])
     current = read_role_changes(config)
     validate_requirement_tasks(config, current)
     root = Path(config["spec_store"]) / "openspec/changes" / config["change"]
@@ -582,19 +738,25 @@ def run_role(client, config, event, prompt, env):
     with contextlib.ExitStack() as stack:
         for path in sorted({config["workspace"], config["spec_store"]}):
             stack.enter_context(workspace_lock(path))
-        config, changes = role_preflight(config, event)
+        effective, changes = role_preflight(config, event)
+        config.update(effective)
         claim_dashboard_request(event, Path.home() / ".openhands/apps/openspec-progress/role-consumed")
+        prepare_role_workspace(config)
         if config["stage"] == "propose":
             # Existing-directory commands accept uppercase; `new change` does not.
             # Exclusive creation under the store lock never overwrites another change.
             target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
             target.mkdir()
-            (target / ".openspec.yaml").write_text("schema: spec-driven\n", encoding="utf-8")
+            (target / ".openspec.yaml").write_text("schema: " + ROLE_SCHEMAS[config["role"]] + "\n", encoding="utf-8")
+            (target / "scope.json").write_text(json.dumps(config["scope"], indent=2) + "\n", encoding="utf-8")
+            read_scope(config, config["change"])
         before_store = scope_snapshot(config["spec_store"])
-        before_workspace = scope_snapshot(config["workspace"]) if config["stage"] != "apply" else None
+        before_workspace = scope_snapshot(config["workspace_parent"])
         task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
         before_tasks = task_path.read_text(encoding="utf-8") if task_path.exists() else ""
         prompt += "\n\nRun configuration (data for this explicitly selected role action):\n" + json.dumps(config, indent=2)
+        if time.monotonic() >= deadline:
+            raise RunError("Workspace preparation exceeded the run timeout; no conversation was started")
         # Role profile selection is fixed by configuration, not injected per-run overrides.
         result = client.run(config, prompt, run_id=env.get("AUTOMATION_RUN_ID", ""), deadline=deadline)
         try:

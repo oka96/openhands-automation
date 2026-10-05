@@ -20,9 +20,9 @@ application is configured in `role-workflow.json`; this repository is not that a
   openspec/changes/<SA|FE|BE|QA>-<PREFIX>-<digits>-<feature>. Preserve exact prefix
   and digits. Never require or create requirements.json or another global index.
 - Role Propose scaffolds one new role-owned change for the selected requirement.
-  The standard spec-driven schema stores proposal.md, design.md,
+  The role-specific sa/frontend/backend/qa schema stores proposal.md, design.md,
   specs/<capability>/spec.md and tasks.md in that independent folder. The runner
-  creates the exact uppercase folder and .openspec.yaml because the pinned CLI's
+  creates the exact uppercase folder, immutable scope.json and role-bound .openspec.yaml because the pinned CLI's
   new-change command is lowercase-only; its existing-change commands accept it.
   Update edits that change's planning from the submitted
   revision prompt; that explicit submission authorizes those scoped artifact

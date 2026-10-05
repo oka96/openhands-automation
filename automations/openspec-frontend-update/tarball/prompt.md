@@ -12,15 +12,24 @@ Use the saved profile and existing tools. Never start another automation or stag
 
 Read AGENTS.md in both configured roots and the skill at
 `<skill_root>/.agents/skills/<skill>/SKILL.md`. Use the existing pinned CLI from
-the implementation workspace: `npx --no-install openspec`. Pass
+the spec store: `cd <spec_store> && npx --no-install openspec`. Pass
 `--store <store_id>` on EVERY command concerning specs/changes, including new
-change, list, status, instructions, show, and validate. The configured workspace
-is the explicit implementing repository; the store owns planning artifacts.
+change, list, status, instructions, show, and validate. The run workspace is a managed checkout of the selected repository (or an empty
+SA planning directory); the store owns planning artifacts.
 Do not substitute similarly named workspace changes for store changes.
 
 The selected role is fixed by this automation definition and cannot be overridden
 by the prompt. It is one of SA (solution architect), Frontend, Backend, or QA.
-The role owns the selected spec; Apply may implement only that spec's tasks.
+The role owns the selected spec and must read scope.json and every referenced
+upstream proposal, design and capability specification before acting. The role
+schema is sa, frontend, backend or qa. Backend and Frontend refer to SA and each
+change only their one bound repository. QA refers to SA, Frontend and Backend
+and changes only its regression repository. The scope and schema are immutable
+for this action; report a binding defect for an explicit store correction.
+SA may span many applications but NEVER edits code repositories. SA Apply only
+verifies its design and handoff checklist; code work goes to Backend/Frontend.
+Do not clone, open a different implementation checkout or switch workspace.
+Apply may implement only that spec's tasks.
 Preserve every role's responsibility and the requirement's four-role Done gate.
 Never check tasks merely because a sample checkbox is checked or an agent said
 work was done. Existing sample progress is illustrative, not verification evidence.
@@ -71,6 +80,6 @@ check tasks or transfer completion to revised text. Preserve .openspec.yaml,
 sibling changes, implementation files and main specs. Never create a requirement
 registry. Scope expansion or material unanswered decisions are blockers.
 
-Use the standard spec-driven schema. Run strict validation of the selected
+Use the role-specific schema. Run strict validation of the selected
 change and confirm all planning artifacts are complete. Stop after planning;
 never run Apply or another action automatically.

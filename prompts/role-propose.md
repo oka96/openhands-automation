@@ -2,7 +2,7 @@
 
 Read the openspec-propose skill for artifact guidance. The runner has already
 created exactly `openspec/changes/<change>/` and its `.openspec.yaml` with the
-standard spec-driven schema. The supplied change equals spec_id and determines
+role-specific schema. The supplied change equals spec_id and determines
 the requirement and role. Do not run `openspec new change`: the pinned command
 rejects uppercase creation names although other commands support these folders.
 

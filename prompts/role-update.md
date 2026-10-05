@@ -14,6 +14,6 @@ check tasks or transfer completion to revised text. Preserve .openspec.yaml,
 sibling changes, implementation files and main specs. Never create a requirement
 registry. Scope expansion or material unanswered decisions are blockers.
 
-Use the standard spec-driven schema. Run strict validation of the selected
+Use the role-specific schema. Run strict validation of the selected
 change and confirm all planning artifacts are complete. Stop after planning;
 never run Apply or another action automatically.

@@ -170,10 +170,26 @@ both role and stage; the runtime independently rejects cross-role requests.
 
 These definitions target the existing local demo:
 
-- Workspace: `/Users/oka/Desktop/openhands-demo`
+- Managed workspace parent: `/Users/oka/Desktop/openhands-automation/workspaces`
 - OpenHands Canvas: `http://127.0.0.1:8000`
 - Saved agent profile: `codex-acp-demo`
 - Spec store: `/Users/oka/Desktop/openspec-store`
+
+Each role change uses its own schema (`sa`, `frontend`, `backend`, `qa`) and
+`scope.json` binding. Backend/Frontend reference SA and each bind one repository;
+QA references SA, Frontend and Backend and binds one regression repository.
+Before a conversation starts, the runner creates `<workspace>/<change>/<app-id>`,
+clones the bound HTTPS GitHub repository and verifies its Git root and origin.
+A later action reuses that checkout without pulling or resetting user edits.
+SA runs in `<workspace>/<change>/planning`, never clones code, and verifies only
+design/handoff tasks. The configured workspace is a managed parent, not a product.
+The pinned CLI runs from the spec store. No OpenSpec installation is required in
+sample repositories. Run reports preserve the actual conversation working directory.
+Scope and schema bindings cannot be changed by an action. Propose receives an
+optional application ID selected from SA; URLs and paths are never event overrides.
+Malformed scope, missing upstream references, clone failure and origin mismatch
+prevent conversation startup. Audits reject planning/SA code changes and downstream
+changes to other managed checkouts. These controls are not an OS sandbox.
 
 The automation runner uses OpenHands Agent Server to start a conversation with
 that saved profile. With the current profile, Codex ACP performs the agent work;
