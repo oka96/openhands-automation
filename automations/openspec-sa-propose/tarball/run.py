@@ -547,9 +547,14 @@ def git_command(arguments, *, cwd, timeout=120):
 def prepare_role_workspace(config):
     parent = Path(config["workspace"])
     parent.mkdir(parents=True, exist_ok=True)
+    if config["role"] == "SA":
+        # Use the store's Git identity, not the managed parent's ancestor repository.
+        config["workspace_parent"] = str(parent)
+        config["workspace"] = config["spec_store"]
+        return config["workspace"]
     directory = managed_directory(parent, config["change"])
     directory.mkdir(exist_ok=True)
-    if config["role"] == "SA" or config.get("target") == "specs":
+    if config.get("target") == "specs":
         target = managed_directory(directory, "planning")
         target.mkdir(exist_ok=True)
     else:

@@ -75,9 +75,12 @@ profile and timeout. Requests cannot override them. The current deployment uses:
 Before a code conversation or code review, the runner creates
 `<workspace>/<spec-id>/<application-id>`, clones its bound repository and checks
 the Git root and origin. Subsequent actions reuse the checkout without pulling or
-resetting user changes. The conversation runs in that checkout. SA and spec-only
-deterministic actions use `<workspace>/<spec-id>/planning`; SA never clones or
-changes code. The pinned OpenSpec CLI runs from the registered store, with explicit
+resetting user changes. The conversation runs in that checkout. SA actions run
+directly in the registered spec store, so the conversation's files and Git panels
+identify that repository. SA never clones or changes code. Other roles' spec-only
+deterministic actions use `<workspace>/<spec-id>/planning`. Existing conversations
+keep their original workspace; the corrected SA workspace applies to new runs.
+The pinned OpenSpec CLI runs from the registered store, with explicit
 `--store`, so code repositories need no OpenSpec installation.
 
 Scope audits reject edits to siblings, schema bindings and other managed

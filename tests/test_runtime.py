@@ -208,6 +208,19 @@ class RunnerTests(unittest.TestCase):
         body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
         self.assertEqual(body["agent_profile_id"], "selected-profile")
 
+    def test_sa_conversation_creation_sends_spec_store_workspace(self):
+        store = self.root / 'spec-store'
+        store.mkdir()
+        config = {**self.config, 'mode': 'role', 'stage': 'update', 'role': 'SA',
+                  'requirement_id': 'REQ-006', 'spec_id': 'SA-REQ-006-contract', 'spec_store': str(store)}
+        runner.prepare_role_workspace(config)
+        server = FakeServer()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.client(server).run(config, 'Update the selected SA spec')
+        body = next(kwargs['body'] for path, kwargs in server.calls if path == '/api/conversations')
+        self.assertEqual(body['workspace'], {'kind': 'LocalWorkspace', 'working_dir': str(store)})
+        self.assertFalse(body['worktree'])
+
     def test_role_conversations_use_plain_spec_title_before_execution_and_reduced_tags_for_every_role_and_stage(self):
         for stage in ("propose", "update", "apply"):
             for role in ("SA", "Frontend", "Backend", "QA"):

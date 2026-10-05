@@ -501,13 +501,13 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(bridge.BridgeError, 'not found'):
             self.client.status({**target, 'run_id': identity()})
 
-    def completed_report(self, outcome='blocked'):
+    def completed_report(self, outcome='blocked', role='Frontend'):
         self.client.setup()
-        request = self.input('apply', 'Frontend')
+        request = self.input('apply', role)
         dispatched = self.client.dispatch(request)
         row = self.runs[0]
         row.update(status='COMPLETED' if outcome == 'completed' else 'FAILED', conversation_id=identity())
-        report = {'version': 1, 'run_id': row['id'], 'conversation_id': row['conversation_id'], 'role': 'Frontend', 'stage': 'apply',
+        report = {'version': 1, 'run_id': row['id'], 'conversation_id': row['conversation_id'], 'role': role, 'stage': 'apply',
                   'requirement_id': request['requirement_id'], 'spec_id': request['spec_id'],
                   'configuration': {key: self.config[key] for key in ('workspace', 'spec_store', 'store_id', 'profile', 'skill_root', 'timeout_seconds')},
                   'outcome': {'status': outcome, 'blocker_type': 'dependency' if outcome == 'blocked' else None,
@@ -539,6 +539,24 @@ class BridgeTests(unittest.TestCase):
         path.write_text(json.dumps(report))
         self.assertEqual(self.client.status(target)['report']['configuration']['workspace'], expected)
         report['configuration']['workspace'] = str(Path(self.config['workspace']) / 'FE-REQ-999-other' / 'sample-frontend')
+        path.write_text(json.dumps(report))
+        self.assertIsNone(self.client.status(target)['report'])
+
+    def test_sa_reports_accept_store_and_historical_planning_workspace(self):
+        target, path, report = self.completed_report('completed', role='SA')
+        for workspace in (self.store, Path(self.config['workspace']) / report['spec_id'] / 'planning'):
+            report['configuration']['workspace'] = str(workspace)
+            path.write_text(json.dumps(report))
+            self.assertEqual(self.client.status(target)['report']['configuration']['workspace'], str(workspace))
+        for workspace in (self.store / 'openspec', self.home / 'other-store',
+                          Path(self.config['workspace']) / 'SA-REQ-999-other' / 'planning'):
+            report['configuration']['workspace'] = str(workspace)
+            path.write_text(json.dumps(report))
+            self.assertIsNone(self.client.status(target)['report'])
+
+    def test_downstream_report_cannot_claim_store_as_code_workspace(self):
+        target, path, report = self.completed_report()
+        report['configuration']['workspace'] = str(self.store)
         path.write_text(json.dumps(report))
         self.assertIsNone(self.client.status(target)['report'])
 

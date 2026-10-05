@@ -544,6 +544,8 @@ class Bridge:
             actual = local_path(config['workspace'])
             parent = Path(self.config['workspace'])
             valid_workspace = actual == parent
+            if role == 'SA' and spec and actual == Path(self.config['spec_store']):
+                valid_workspace = True
             if spec and actual.parent == parent / spec:
                 valid_workspace = actual.name == 'planning' if role == 'SA' else slug(actual.name)
             require(valid_workspace, 'Invalid role result workspace')

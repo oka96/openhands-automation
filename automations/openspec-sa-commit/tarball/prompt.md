@@ -14,8 +14,9 @@ Read AGENTS.md in both configured roots and the skill at
 `<skill_root>/.agents/skills/<skill>/SKILL.md`. Use the existing pinned CLI from
 the spec store: `cd <spec_store> && npx --no-install openspec`. Pass
 `--store <store_id>` on EVERY command concerning specs/changes, including new
-change, list, status, instructions, show, and validate. The run workspace is a managed checkout of the selected repository (or an empty
-SA planning directory); the store owns planning artifacts.
+change, list, status, instructions, show, and validate. SA runs directly in the
+registered spec store. Other roles run in a managed checkout of their selected
+repository; the store owns planning artifacts.
 Do not substitute similarly named workspace changes for store changes.
 
 The selected role is fixed by this automation definition and cannot be overridden

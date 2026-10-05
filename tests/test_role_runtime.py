@@ -762,9 +762,35 @@ class RoleRunnerTests(unittest.TestCase):
                 runner.save_role_outcome(self.config, self.event, SUCCESS, self.env, None)
 
     # Exercise managed workspaces independently of the model/network.
+    def test_sa_conversations_and_reports_use_store_without_cloning(self):
+        for stage in ('propose', 'update', 'apply'):
+            with self.subTest(stage=stage):
+                self.set_event(stage, 'SA')
+                with mock.patch.object(self, 'fake_git', side_effect=AssertionError('SA must never clone')):
+                    code, output, client, _ = self.invoke()
+                self.assertEqual(code, 0, output)
+                config = client.return_value.run.call_args.args[0]
+                self.assertEqual(config['workspace'], str(self.store))
+                self.assertEqual(config['workspace_parent'], str(self.workspace))
+                self.assertEqual(self.read_report()['configuration']['workspace'], str(self.store))
+
+    def test_sa_workspace_git_identity_is_store_not_automation_ancestor(self):
+        import subprocess
+        for root, name in ((self.workspace, 'automation'), (self.store, 'spec-store')):
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            runner.git_command(['remote', 'add', 'origin', f'https://github.com/example/{name}.git'], cwd=str(root))
+        parent = self.workspace / 'workspaces'
+        for stage in runner.ROLE_SKILLS:
+            with self.subTest(stage=stage):
+                config = {**self.config, 'stage': stage, 'workspace': str(parent), 'change': self.event['change']}
+                target = runner.prepare_role_workspace(config)
+                self.assertEqual(runner.git_command(['rev-parse', '--show-toplevel'], cwd=target), str(self.store))
+                self.assertEqual(runner.git_command(['remote', 'get-url', 'origin'], cwd=target),
+                                 'https://github.com/example/spec-store.git')
+
     def test_sa_apply_rejects_code_changes_and_never_clones(self):
         def edit_code(config, prompt, **kwargs):
-            self.assertTrue(config['workspace'].endswith('/planning'))
+            self.assertEqual(config['workspace'], str(self.store))
             (self.workspace / 'app.js').write_text('forbidden SA implementation')
             return self.execute_action(config, prompt, **kwargs)
         with mock.patch.object(self, 'fake_git', side_effect=AssertionError('SA must never clone')):
