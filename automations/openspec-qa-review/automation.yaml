@@ -1,0 +1,17 @@
+{
+  "name": "OpenSpec QA · Review",
+  "state": "ACTIVE",
+  "enabled": true,
+  "trigger": {
+    "type": "event",
+    "source": "openspec-role-dashboard",
+    "on": "review.requested",
+    "filter": "schema == 'openspec-role-dashboard/v3' && stage == 'review' && approval == 'review' && role == 'QA'"
+  },
+  "entrypoint": "python3 run.py",
+  "timeout": 1800,
+  "keep_alive": false,
+  "tarball_source": {
+    "type": "internal"
+  }
+}

@@ -21,20 +21,22 @@ class BuildTests(unittest.TestCase):
         (self.root / "role-workflow.json").write_text(json.dumps(self.role_config))
         (self.root / "runtime").mkdir()
         (self.root / "runtime" / "run.py").write_text("print('fixture runtime')\n")
+        (self.root / "runtime" / "delivery.py").write_text("# Fixture delivery\n")
+        (self.root / "runtime" / "actions.json").write_text(builder.ACTION_SOURCE.read_text())
         (self.root / "prompts").mkdir()
         (self.root / "prompts" / "role-common.md").write_text("Role boundaries.\n")
         for stage in builder.ROLE_STAGES:
             (self.root / "prompts" / f"role-{stage}.md").write_text(f"Role {stage}.\n")
 
-    def test_twelve_complete_bundles_bind_exact_role_and_skill(self):
-        self.assertEqual(len(builder.build(self.root)), 48)
-        self.assertEqual(len(list((self.root / "automations").iterdir())), 12)
+    def test_twenty_four_complete_bundles_bind_exact_role_and_action(self):
+        self.assertEqual(len(builder.build(self.root)), 144)
+        self.assertEqual(len(list((self.root / "automations").iterdir())), 24)
         for role in builder.ROLES:
             for stage in builder.ROLE_STAGES:
                 with self.subTest(role=role, stage=stage):
                     directory = self.root / "automations" / f"openspec-{role.lower()}-{stage}"
                     metadata = json.loads((directory / "automation.yaml").read_text())
-                    self.assertEqual(metadata["name"], f"OpenSpec {role} · {stage.title()}")
+                    self.assertEqual(metadata["name"], f"OpenSpec {role} · {builder.ACTION_LABELS[stage]}")
                     self.assertEqual(metadata["trigger"], {
                         "type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
                         "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"})
@@ -43,13 +45,15 @@ class BuildTests(unittest.TestCase):
                     prompt = (directory / "tarball/prompt.md").read_text()
                     self.assertTrue(prompt.endswith(f"Role boundaries.\n\nRole {stage}.\n"))
                     workflow = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}[role] + " Workflow"
-                    self.assertTrue(prompt.startswith(f"# {workflow} · {stage.title()}\n"))
+                    self.assertTrue(prompt.startswith(f"# {workflow} · {builder.ACTION_LABELS[stage]}\n"))
                     self.assertIn(f"or open {workflow}.", prompt)
                     self.assertIn("Role spec and Automation", prompt)
-                    self.assertIn(f"Effective role: {role}; Automation: {stage.title()}; saved agent profile: codex-acp-demo", prompt)
+                    self.assertIn(f"Effective role: {role}; Automation: {builder.ACTION_LABELS[stage]}; saved agent profile: codex-acp-demo", prompt)
                     self.assertIn("Native Run now is unsupported", prompt)
                     self.assertIn("native profile selector does not override", prompt)
                     self.assertEqual((directory / "tarball/run.py").read_text(), (self.root / "runtime/run.py").read_text())
+                    self.assertEqual((directory / "tarball/delivery.py").read_text(), (self.root / "runtime/delivery.py").read_text())
+                    self.assertEqual((directory / "tarball/actions.json").read_text(), builder.ACTION_SOURCE.read_text())
         self.assertEqual(builder.build(self.root, check=True), [])
         self.assertEqual(builder.build(self.root), [])
 

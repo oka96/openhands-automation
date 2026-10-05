@@ -10,7 +10,9 @@ from urllib.parse import urlsplit
 
 
 STAGES = ("explore", "propose", "update", "apply", "verify", "sync", "archive")
-ROLE_STAGES = ("propose", "update", "apply")
+ACTION_SOURCE = Path(__file__).resolve().parents[1] / "runtime/actions.json"
+ROLE_STAGES = tuple(action["id"] for action in json.loads(ACTION_SOURCE.read_text()))
+ACTION_LABELS = {action["id"]: action["label"] for action in json.loads(ACTION_SOURCE.read_text())}
 ROLE_FIELDS = {"workspace", "spec_store", "store_id", "skill_root", "profile", "timeout_seconds", "canvas_url"}
 ROLES = ("SA", "Frontend", "Backend", "QA")
 
@@ -60,6 +62,10 @@ def load_role_config(root: Path) -> dict:
 def expected_files(root: Path) -> dict[Path, str]:
     """Read and validate all sources before any generated files are written."""
     runtime = read_text(root / "runtime" / "run.py")
+    delivery = read_text(root / "runtime" / "delivery.py")
+    actions = read_text(root / "runtime" / "actions.json")
+    if tuple(action["id"] for action in json.loads(actions)) != ROLE_STAGES:
+        raise ValueError("Action catalog must match the workflow action contract")
     if not runtime.strip():
         raise ValueError("runtime/run.py must not be empty")
     expected = {}
@@ -73,20 +79,22 @@ def expected_files(root: Path) -> dict[Path, str]:
             raise ValueError(f"prompts/role-{stage}.md must not be empty")
         directory = Path("automations") / f"openspec-{role.lower()}-{stage}"
         expected[directory / "automation.yaml"] = json_text({
-            "name": f"OpenSpec {role} · {stage.title()}", "state": "ACTIVE", "enabled": True,
+            "name": f"OpenSpec {role} · {ACTION_LABELS[stage]}", "state": "ACTIVE", "enabled": True,
             "trigger": {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
                         "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"},
             "entrypoint": "python3 run.py", "timeout": role_config["timeout_seconds"],
             "keep_alive": False, "tarball_source": {"type": "internal"},
         })
         expected[directory / "tarball" / "run.py"] = runtime
+        expected[directory / "tarball" / "delivery.py"] = delivery
+        expected[directory / "tarball" / "actions.json"] = actions
         expected[directory / "tarball" / "config.json"] = json_text({**role_config, "mode": "role", "stage": stage, "role": role})
         workflow = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}[role] + " Workflow"
-        launch = (f"# {workflow} · {stage.title()}\n\n"
+        launch = (f"# {workflow} · {ACTION_LABELS[stage]}\n\n"
                   f"Follow the role link from OpenSpec Kanban or open {workflow}. "
                   "Choose a requirement, Role spec and Automation, then submit in that role workflow.\n"
                   "Native Run now is unsupported because it has no requirement context.\n"
-                  f"Effective role: {role}; Automation: {stage.title()}; saved agent profile: {role_config['profile']}; "
+                  f"Effective role: {role}; Automation: {ACTION_LABELS[stage]}; saved agent profile: {role_config['profile']}; "
                   f"timeout: {role_config['timeout_seconds']} seconds.\n"
                   "These settings come from role-workflow.json. The native profile selector does not override them.\n")
         expected[directory / "tarball" / "prompt.md"] = f"{launch}\n{role_common}\n\n{prompt}\n"
@@ -129,9 +137,9 @@ def main() -> int:
             print(f"  {path}", file=sys.stderr)
         return 1
     if args.check:
-        print("All 12 dedicated role/skill bundles match their sources.")
+        print(f"All {len(ROLES) * len(ROLE_STAGES)} dedicated role/action bundles match their sources.")
     else:
-        print(f"Built 12 OpenSpec bundles ({len(changed)} files updated).")
+        print(f"Built {len(ROLES) * len(ROLE_STAGES)} OpenSpec bundles ({len(changed)} files updated).")
     return 0
 
 

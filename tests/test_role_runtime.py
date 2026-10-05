@@ -79,6 +79,10 @@ class RoleRunnerTests(unittest.TestCase):
                       "approval": stage, "request_id": str(uuid.uuid4()), "spec_store": str(self.store),
                       "requirement_id": "REQ-006", "context_change": self.spec_id(role) if stage == "propose" else selected, "role": role,
                       "spec_id": selected, "change": selected, "request": "Add clear task context and tests" if stage != "apply" else ""}
+        if stage in ("review", "commit", "merge-request"):
+            self.event["target"] = "specs" if role == "SA" else "code"
+            if stage != "review":
+                self.event.update(review_id=str(uuid.uuid4()), message="Deliver reviewed changes")
         trigger = {"type": "event", "source": "openspec-role-dashboard", "on": f"{stage}.requested",
                    "filter": f"schema == 'openspec-role-dashboard/v3' && stage == '{stage}' && approval == '{stage}' && role == '{role}'"}
         if normalized:
@@ -148,7 +152,7 @@ class RoleRunnerTests(unittest.TestCase):
         return code, output.getvalue(), client, callback
 
     def test_all_twelve_actions_target_one_spec_and_preserve_siblings(self):
-        for stage in runner.ROLE_STAGES:
+        for stage in ("propose", "update", "apply"):
             for role in runner.ROLES:
                 with self.subTest(stage=stage, role=role):
                     self.create_spec(self.spec_id(role), role)
@@ -165,6 +169,47 @@ class RoleRunnerTests(unittest.TestCase):
                     self.assertFalse(self.metadata_path.exists())
                     self.assertLessEqual(runner.changed_paths(before, runner.scope_snapshot(self.store)), allowed)
                     self.assertEqual((self.workspace / "app.js").read_text(), "original implementation\n")
+
+    def test_update_persists_revision_even_when_agent_raises_after_edit(self):
+        self.set_event("update", "Backend")
+        def partial(config, prompt, **kwargs):
+            (self.change / "proposal.md").write_text("Partial requested update\n")
+            raise runner.RunError("Agent disconnected")
+        code, output, _, _ = self.invoke(partial)
+        self.assertEqual(code, 1)
+        context = {**self.config, **self.event}
+        with mock.patch.object(runner.Path, "home", return_value=self.root):
+            revisions = runner.delivery.history(context)["revisions"]
+            self.assertEqual(len(revisions), 1)
+            row = runner.delivery.load_record(context, "revisions", revisions[0]["id"])
+        self.assertEqual(row["outcome"], "execution_error")
+        self.assertIn("+Partial requested update", row["files"][0]["diff"])
+
+    def test_new_sa_requirement_uses_explicit_bindings_and_no_existing_context(self):
+        self.set_event("propose", "SA")
+        self.event.update(requirement_id="BOOK-002", context_change="", spec_id="SA-BOOK-002-contract", change="SA-BOOK-002-contract",
+                          applications=[{"id": "web", "name": "Booking web", "role": "Frontend", "repository": "https://github.com/example/web.git"}])
+        self.change = self.change_path(self.event["spec_id"])
+        self.write_event()
+        code, output, client, _ = self.invoke()
+        self.assertEqual(code, 0, output)
+        client.return_value.run.assert_called_once()
+        self.assertEqual(json.loads((self.change / "scope.json").read_text())["applications"], self.event["applications"])
+
+    def test_deterministic_review_and_delivery_do_not_start_conversations(self):
+        for stage in ("review", "commit", "merge-request"):
+            self.set_event(stage, "SA")
+            self.event["target"] = "specs"
+            if stage != "review":
+                self.event.update(review_id=str(uuid.uuid4()), message="Deliver contract")
+            self.write_event()
+            with mock.patch.object(runner.delivery, "create_review", return_value={"id": str(uuid.uuid4()), "files": []}) as review, \
+                    mock.patch.object(runner.delivery, "deliver", return_value={"commit": "a" * 40, "branch": "main"}) as deliver:
+                code, output, client, _ = self.invoke()
+            self.assertEqual(code, 0, output)
+            client.return_value.run.assert_not_called()
+            self.assertEqual(review.call_count, int(stage == "review"))
+            self.assertEqual(deliver.call_count, int(stage != "review"))
 
     def test_second_spec_can_reuse_task_ids_and_descriptions(self):
         self.set_event("apply", "Frontend", feature="second")

@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,12 @@ ANALYZERS = {
     "policy_rail": "PolicyRailSecurityAnalyzer",
 }
 ROLES = ("SA", "Frontend", "Backend", "QA")
-ROLE_STAGES = ("propose", "update", "apply")
+ACTION_DEFINITIONS = json.loads(Path(__file__).with_name("actions.json").read_text())
+ROLE_STAGES = tuple(action["id"] for action in ACTION_DEFINITIONS)
+ROLE_SKILLS = {action["id"]: action["skill"] for action in ACTION_DEFINITIONS}
+_delivery_spec = importlib.util.spec_from_file_location("role_delivery", Path(__file__).with_name("delivery.py"))
+delivery = importlib.util.module_from_spec(_delivery_spec)
+_delivery_spec.loader.exec_module(delivery)
 ROLE_CONFIG_FIELDS = {"workspace", "spec_store", "store_id", "skill_root", "profile", "timeout_seconds", "canvas_url", "mode", "stage", "role"}
 ROLE_EVENT_FIELDS = {"schema", "type", "stage", "approval", "request_id", "spec_store", "requirement_id", "context_change", "role", "spec_id", "change", "request"}
 CHANGE_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -213,9 +219,9 @@ def load_role_config(config):
     if not isinstance(config["profile"], str) or not config["profile"].strip():
         raise RunError("Role profile must be a saved agent profile name")
     config["canvas_url"] = local_url(config["canvas_url"])
-    skill = Path(config["skill_root"]) / ".agents/skills" / STAGES[config["stage"]] / "SKILL.md"
-    if not skill.is_file():
-        raise RunError(f"Automation source directory is missing {STAGES[config['stage']]}")
+    skill_name = ROLE_SKILLS[config["stage"]]
+    if skill_name and not (Path(config["skill_root"]) / ".agents/skills" / skill_name / "SKILL.md").is_file():
+        raise RunError(f"Automation source directory is missing {skill_name}")
     return config
 
 
@@ -244,7 +250,7 @@ def require_role_trigger(env, config):
                 or event["event_key"] != f"{stage}.requested"):
             raise RunError("Invalid native role event wrapper; source and event key must match this action")
         event = event["payload"]
-    if (not isinstance(event, dict) or not ROLE_EVENT_FIELDS <= set(event) or set(event) - ROLE_EVENT_FIELDS - {"application_id"}
+    if (not isinstance(event, dict) or not ROLE_EVENT_FIELDS <= set(event) or set(event) - ROLE_EVENT_FIELDS - {"application_id", "applications", "target", "review_id", "message"}
             or event.get("schema") != "openspec-role-dashboard/v3"
             or event.get("stage") != stage or event.get("approval") != stage
             or event.get("type") != f"{stage}.requested" or event.get("role") != role):
@@ -258,13 +264,24 @@ def require_role_trigger(env, config):
     if not valid_spec_id(event["spec_id"], event["requirement_id"], role):
         raise RunError("Spec ID must match the selected requirement and role")
     context = role_change(event["context_change"])
-    if (event["change"] != event["spec_id"] or not context
-            or context["requirement_id"] != event["requirement_id"]
+    new_requirement = stage == "propose" and role == "SA" and event["context_change"] == ""
+    if (event["change"] != event["spec_id"] or not new_requirement and (not context
+            or context["requirement_id"] != event["requirement_id"])
             or stage != "propose" and event["context_change"] != event["change"]):
         raise RunError("Role action must bind a canonical change and context in its selected requirement")
     if (not isinstance(event["request"], str) or len(event["request"]) > 10000
             or (stage in ("propose", "update") and not event["request"].strip())):
         raise RunError("Role Propose and Update require a prompt; prompts must be at most 10000 characters")
+    if stage in ("review", "commit", "merge-request"):
+        if event.get("target") not in ("specs", "code") or role == "SA" and event["target"] != "specs":
+            raise RunError("Choose specifications or the bound code repository; SA can deliver specifications only")
+        if stage != "review" and (not delivery.canonical_id(event.get("review_id")) or not isinstance(event.get("message"), str)
+                                  or not 0 < len(event["message"].strip()) <= 500 or re.search(r"[\x00-\x1f]", event["message"])):
+            raise RunError("Delivery requires a selected review and one-line commit message or PR title")
+    elif any(key in event for key in ("target", "review_id", "message")):
+        raise RunError("Delivery inputs are only valid for Review, Commit or Merge Request")
+    if "applications" in event and not new_requirement:
+        raise RunError("Application bindings are only accepted when SA creates a new requirement")
     try:
         if str(uuid.UUID(event["request_id"])) != event["request_id"]:
             raise ValueError()
@@ -431,6 +448,14 @@ def read_scope(config, name, seen=None):
         scope = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, UnicodeError):
         raise RunError(f"{name}: missing or invalid scope.json; define repository bindings before running") from None
+    return validate_scope_value(config, name, scope, seen)
+
+
+def validate_scope_value(config, name, scope, seen=None):
+    identity = role_change(name)
+    if not identity:
+        raise RunError("Invalid repository scope identity")
+    seen = set(seen or ())
     if not isinstance(scope, dict) or set(scope) != {"version", "applications", "references"} or type(scope["version"]) is not int or scope["version"] != 1:
         raise RunError("Invalid scope.json fields or version")
     apps, refs = scope["applications"], scope["references"]
@@ -524,7 +549,7 @@ def prepare_role_workspace(config):
     parent.mkdir(parents=True, exist_ok=True)
     directory = managed_directory(parent, config["change"])
     directory.mkdir(exist_ok=True)
-    if config["role"] == "SA":
+    if config["role"] == "SA" or config.get("target") == "specs":
         target = managed_directory(directory, "planning")
         target.mkdir(exist_ok=True)
     else:
@@ -553,23 +578,32 @@ def prepare_role_workspace(config):
 def role_preflight(config, event):
     """Validate effective event inputs and current associations under both locks."""
     config = {**config, **{key: event[key] for key in ("change", "context_change", "requirement_id", "spec_id", "request")},
-              "dashboard_request_id": event["request_id"], "skill": STAGES[config["stage"]]}
+              "dashboard_request_id": event["request_id"], "skill": ROLE_SKILLS[config["stage"]]}
+    if "target" in event:
+        config["target"] = event["target"]
     validate_role_store(config)
     changes = read_role_changes(config)
     validate_requirement_tasks(config, changes)
     context = changes.get(config["context_change"])
-    if not context or context["requirement_id"] != config["requirement_id"]:
+    new_requirement = config["stage"] == "propose" and config["role"] == "SA" and config["context_change"] == ""
+    if not new_requirement and (not context or context["requirement_id"] != config["requirement_id"]):
         raise RunError("The requirement/context change association has changed; refresh the board")
     target = safe_store_file(config, Path(config["spec_store"]) / "openspec/changes" / config["change"])
     context_root = Path(config["spec_store"]) / "openspec/changes" / config["context_change"]
-    for entry in context_root.rglob("*"):
+    for entry in context_root.rglob("*") if not new_requirement else []:
         safe_store_file(config, entry)
     if config["stage"] == "propose":
         if target.exists():
             raise RunError("The proposed spec already exists; choose a new unused feature name")
         if sum(item["requirement_id"] == config["requirement_id"] for item in changes.values()) >= 20:
             raise RunError("The requirement's 20 spec limit has been reached")
-        config["scope"] = proposed_scope(config, changes, event.get("application_id", ""))
+        if new_requirement:
+            if any(item["requirement_id"] == config["requirement_id"] for item in changes.values()):
+                raise RunError("Requirement already exists; choose its context to propose another spec")
+            config["scope"] = {"version": 1, "applications": event.get("applications"), "references": []}
+            validate_scope_value(config, config["change"], config["scope"], set())
+        else:
+            config["scope"] = proposed_scope(config, changes, event.get("application_id", ""))
     else:
         if changes.get(config["change"]) != role_change(config["spec_id"]):
             raise RunError("The selected requirement/role/spec association has changed; refresh the board")
@@ -742,6 +776,18 @@ def run_role(client, config, event, prompt, env):
         config.update(effective)
         claim_dashboard_request(event, Path.home() / ".openhands/apps/openspec-progress/role-consumed")
         prepare_role_workspace(config)
+        if config["stage"] in ("review", "commit", "merge-request"):
+            try:
+                if config["stage"] == "review":
+                    review = delivery.create_review(config, event["target"], env.get("AUTOMATION_RUN_ID", ""))
+                    return {"status": "completed", "summary": f"Reviewed {len(review['files'])} files in {event['target']}. Snapshot {review['id']}.",
+                            "findings": [], "next_action": "Inspect the review diff in this role app, then choose Commit or Merge Request."}
+                receipt = delivery.deliver(config, event["review_id"], event["target"], config["stage"], event["message"])
+                return {"status": "completed", "summary": f"Committed {receipt['commit']} on {receipt['branch']}." + (" " + receipt["url"] if "url" in receipt else " Local commit; nothing pushed."),
+                        "findings": [], "next_action": "Open the delivery receipt in this role app."}
+            except delivery.DeliveryError as error:
+                raise RunError(str(error), outcome="needs_review") from None
+        before_spec = delivery.spec_snapshot(config)
         if config["stage"] == "propose":
             # Existing-directory commands accept uppercase; `new change` does not.
             # Exclusive creation under the store lock never overwrites another change.
@@ -758,15 +804,20 @@ def run_role(client, config, event, prompt, env):
         if time.monotonic() >= deadline:
             raise RunError("Workspace preparation exceeded the run timeout; no conversation was started")
         # Role profile selection is fixed by configuration, not injected per-run overrides.
-        result = client.run(config, prompt, run_id=env.get("AUTOMATION_RUN_ID", ""), deadline=deadline)
+        result = None
         try:
-            audit_role_scope(config, before_store, before_workspace, before_tasks, result)
-            return validate_role_result(config, changes, before_tasks, result)
-        except (RunError, OSError, UnicodeError) as error:
-            if not isinstance(error, RunError):
-                error = RunError("Role artifact audit could not read the expected UTF-8 source; inspect missing or invalid files")
-            return {"status": "blocked", "outcome": "execution_error", "summary": str(error),
-                    "findings": [], "agent_result": result, "audit_errors": [str(error)]}
+            result = client.run(config, prompt, run_id=env.get("AUTOMATION_RUN_ID", ""), deadline=deadline)
+            try:
+                audit_role_scope(config, before_store, before_workspace, before_tasks, result)
+                result = validate_role_result(config, changes, before_tasks, result)
+            except (RunError, OSError, UnicodeError) as error:
+                if not isinstance(error, RunError):
+                    error = RunError("Role artifact audit could not read the expected UTF-8 source; inspect missing or invalid files")
+                result = {"status": "blocked", "outcome": "execution_error", "summary": str(error),
+                          "findings": [], "agent_result": result, "audit_errors": [str(error)]}
+            return result
+        finally:
+            delivery.save_revision(config, before_spec, (result or {}).get("outcome", (result or {}).get("status", "execution_error")), env.get("AUTOMATION_RUN_ID", ""))
 
 
 def require_manual_trigger(env, config=None):
