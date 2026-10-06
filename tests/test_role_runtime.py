@@ -38,7 +38,7 @@ class RoleRunnerTests(unittest.TestCase):
                        "store_id": "fixture-store", "skill_root": str(self.workspace), "profile": "codex-acp-demo",
                        "timeout_seconds": 60, "canvas_url": "http://127.0.0.1:8000"}
         self.config_path, self.prompt_path = self.root / "config.json", self.root / "prompt.md"
-        self.prompt_path.write_text("Use only the selected spec, role and stage.")
+        self.prompt_path.write_text("Use ${skill_path} for ${change}.\n${context}\nRequest: ${request}")
         self.env = {"AGENT_SERVER_URL": "http://127.0.0.1:18000", "SESSION_API_KEY": "secret-session",
                     "AUTOMATION_CALLBACK_URL": "http://127.0.0.1:18001/callback", "AUTOMATION_CALLBACK_API_KEY": "secret-callback",
                     "AUTOMATION_RUN_ID": str(uuid.uuid4()), "AUTOMATION_AGENT_PROFILE_ID": "not-the-fixed-profile"}
@@ -119,6 +119,8 @@ class RoleRunnerTests(unittest.TestCase):
         self.assertNotIn("profile_id", kwargs)
         self.assertEqual(config["profile"], "codex-acp-demo")
         self.assertIn(config["spec_id"], prompt)
+        self.assertIn(str(Path(config["skill_root"]) / ".agents/skills" / runner.ROLE_SKILLS[config["stage"]] / "SKILL.md"), prompt)
+        self.assertNotIn('"selected_tasks":', prompt)
         result = dict(SUCCESS)
         if config["stage"] == "propose":
             self.create_spec(config["spec_id"], config["role"])
@@ -846,6 +848,40 @@ class RoleRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(runner.RunError, 'origin does not match'):
                 runner.prepare_role_workspace({**self.config, 'change': self.event['change'], 'scope': config['scope']})
             self.assertEqual((target / 'unfinished.js').read_text(), 'preserve user edits')
+
+    def test_role_prompt_preserves_input_without_recursive_expansion(self):
+        request = '保留 ${context}, ${change} and `$(do-not-run)`\n"quoted" \\ text'
+        template = 'Use ${skill_path} for ${change}.\nCONTEXT=${context}\nREQUEST=${request}'
+        for role in runner.ROLES:
+            for stage in runner.ROLE_SKILLS:
+                with self.subTest(role=role, stage=stage):
+                    self.set_event(stage, role)
+                    config = {**self.config, **self.event, "request": request,
+                              "related_changes": [self.spec_id(role)], "selected_tasks": [{"description": "Not copied"}]}
+                    rendered = runner.render_role_prompt(template, config)
+                    header, payload = rendered.split('\nCONTEXT=', 1)
+                    context, user_input = payload.split('\nREQUEST=', 1)
+                    self.assertIn(runner.ROLE_SKILLS[stage] + '/SKILL.md', header)
+                    self.assertIn(config['change'], header)
+                    self.assertEqual(json.loads(user_input), request)
+                    actual = json.loads(context)
+                    self.assertEqual(actual, {key: config[key] for key in (
+                        "role", "stage", "requirement_id", "change", "spec_store", "store_id",
+                        "workspace", "context_change", "related_changes")})
+                    self.assertNotIn('"selected_tasks":', rendered)
+                    self.assertNotIn('"profile":', rendered)
+
+    def test_invalid_role_prompt_never_starts_a_conversation(self):
+        for template in ('Missing context', self.prompt_path.read_text() + '\n${unknown}'):
+            with self.subTest(template=template):
+                self.env['AUTOMATION_RUN_ID'] = str(uuid.uuid4())
+                self.set_event('propose', 'SA')
+                self.prompt_path.write_text(template)
+                code, output, client, _ = self.invoke()
+                self.assertEqual(code, 1)
+                self.assertIn('prompt placeholders', output)
+                client.return_value.run.assert_not_called()
+                self.assertFalse(self.change.exists(), 'Invalid templates do not create partial specs')
 
     def test_symlinked_checkout_fails_before_git(self):
         self.set_event('apply', 'Backend')

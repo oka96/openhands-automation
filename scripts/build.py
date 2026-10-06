@@ -13,6 +13,7 @@ STAGES = ("explore", "propose", "update", "apply", "verify", "sync", "archive")
 ACTION_SOURCE = Path(__file__).resolve().parents[1] / "runtime/actions.json"
 ROLE_STAGES = tuple(action["id"] for action in json.loads(ACTION_SOURCE.read_text()))
 ACTION_LABELS = {action["id"]: action["label"] for action in json.loads(ACTION_SOURCE.read_text())}
+ACTION_SKILLS = {action["id"]: action["skill"] for action in json.loads(ACTION_SOURCE.read_text())}
 ROLE_FIELDS = {"workspace", "spec_store", "store_id", "skill_root", "profile", "timeout_seconds", "canvas_url"}
 ROLES = ("SA", "Frontend", "Backend", "QA")
 
@@ -89,15 +90,13 @@ def expected_files(root: Path) -> dict[Path, str]:
         expected[directory / "tarball" / "delivery.py"] = delivery
         expected[directory / "tarball" / "actions.json"] = actions
         expected[directory / "tarball" / "config.json"] = json_text({**role_config, "mode": "role", "stage": stage, "role": role})
-        workflow = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}[role] + " Workflow"
-        launch = (f"# {workflow} · {ACTION_LABELS[stage]}\n\n"
-                  f"Follow the role link from OpenSpec Kanban or open {workflow}. "
-                  "Choose a requirement, Role spec and Automation, then submit in that role workflow.\n"
-                  "Native Run now is unsupported because it has no requirement context.\n"
-                  f"Effective role: {role}; Automation: {ACTION_LABELS[stage]}; saved agent profile: {role_config['profile']}; "
-                  f"timeout: {role_config['timeout_seconds']} seconds.\n"
-                  "These settings come from role-workflow.json. The native profile selector does not override them.\n")
-        expected[directory / "tarball" / "prompt.md"] = f"{launch}\n{role_common}\n\n{prompt}\n"
+        invocation = (f"# {role} · {ACTION_LABELS[stage]}\n\n"
+                      f"Use [${ACTION_SKILLS[stage]}](<${{skill_path}}>) for `${{change}}`.\n"
+                      "Read that SKILL.md and follow it within the run boundaries below.\n")
+        template = f"{invocation}\n{prompt}\n\n{role_common}\n"
+        if set(re.findall(r"\$\{([^}]*)\}", template)) != {"skill_path", "change", "context", "request"}:
+            raise ValueError("Role prompt placeholders must be skill_path, change, context and request")
+        expected[directory / "tarball" / "prompt.md"] = template
     return expected
 
 

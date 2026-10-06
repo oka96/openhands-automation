@@ -40,6 +40,11 @@ application is configured in `role-workflow.json`; this repository is not that a
   injected environment and the user's saved OpenHands agent profile.
 - Keep the runtime Python standard-library only. Do not introduce ADLC skills:
   prompts must reuse the target's existing OpenSpec skills.
+  Keep generated prompts skill-first and concise. Put action exceptions in
+  prompts/role-<action>.md and shared scope/result rules in role-common.md;
+  do not duplicate the skills' procedural steps or dump the entire runtime config.
+  Template fields are skill_path, change, context and request. Substitute once,
+  preserving user input as data. Retired templates stay under archive/prompts/.
 - Run `npm test` and `npm run check` before committing.
 - Do not modify the target application while maintaining these definitions.
 - Automated turns stop after planning or implementation and must not commit or push.

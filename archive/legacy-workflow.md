@@ -2,6 +2,8 @@
 
 Historical documentation only. These definitions were retired on 2026-10-04. Do not use the old installation or sync instructions.
 
+The original prompt templates are preserved in `archive/prompts/`.
+
 # OpenSpec stages in OpenHands
 
 Run **Propose**, **Update**, or **Apply** for SA, Frontend, Backend, or QA from the

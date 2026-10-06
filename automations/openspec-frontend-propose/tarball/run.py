@@ -757,6 +757,22 @@ def validate_role_result(config, changes, before_tasks, result):
     return result
 
 
+def render_role_prompt(template, config):
+    """Substitute trusted template fields once; user input is never templated."""
+    context = {key: config[key] for key in (
+        "role", "stage", "requirement_id", "change", "spec_store", "store_id",
+        "workspace", "context_change", "related_changes")}
+    values = {
+        "skill_path": str(Path(config["skill_root"]) / ".agents/skills" / ROLE_SKILLS[config["stage"]] / "SKILL.md"),
+        "change": config["change"],
+        "context": json.dumps(context, indent=2, ensure_ascii=False),
+        "request": json.dumps(config["request"], ensure_ascii=False),
+    }
+    if set(re.findall(r"\$\{([^}]*)\}", template)) != values.keys():
+        raise RunError("Role prompt placeholders must be skill_path, change, context and request")
+    return re.sub(r"\$\{([^}]*)\}", lambda match: values[match[1]], template)
+
+
 def run_role(client, config, event, prompt, env):
     deadline = time.monotonic() + config["timeout_seconds"]
     # Deterministic order prevents two role runs that share either root deadlocking.
@@ -767,6 +783,7 @@ def run_role(client, config, event, prompt, env):
         config.update(effective)
         claim_dashboard_request(event, Path.home() / ".openhands/apps/openspec-progress/role-consumed")
         prepare_role_workspace(config)
+        prompt = render_role_prompt(prompt, config)
         before_spec = delivery.spec_snapshot(config)
         result = None
         try:
@@ -782,7 +799,6 @@ def run_role(client, config, event, prompt, env):
             before_workspace = scope_snapshot(config["workspace_parent"])
             task_path = Path(config["spec_store"]) / "openspec/changes" / config["change"] / "tasks.md"
             before_tasks = task_path.read_text(encoding="utf-8") if task_path.exists() else ""
-            prompt += "\n\nRun configuration (data for this explicitly selected role action):\n" + json.dumps(config, indent=2)
             if time.monotonic() >= deadline:
                 raise RunError("Workspace preparation exceeded the run timeout; no conversation was started")
             # Role profile selection is fixed by configuration, not injected per-run overrides.

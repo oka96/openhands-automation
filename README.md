@@ -53,12 +53,39 @@ panel inside OpenHands. No public App API selects that panel automatically.
 - `runtime/collector.cjs`: authoritative read-only Kanban aggregation and scope checks.
 - `runtime/run.py`: event validation, locks, workspace preparation, model conversations and role audits.
 - `runtime/delivery.py`: spec revisions, conversation associations and read-only historical delivery records.
-- `prompts/`: bounded instructions for the three model actions only.
+- `prompts/`: short action exceptions and one shared execution/result contract; the OpenSpec skills own the workflow steps.
 
 Apps are visual clients. They contain fixed transport loaders that call the local
 Automation runtime and display its returned data. This repository must therefore
 be available to the Agent Server at `/Users/oka/Desktop/openhands-automation`.
 No workflow business logic is duplicated in the Apps.
+
+### Prompt structure
+
+Each generated `prompt.md` starts with a skill reference:
+
+```md
+Use [$openspec-apply-change](<${skill_path}>) for `${change}`.
+Read that SKILL.md and follow it within the run boundaries below.
+```
+
+The runner replaces four template fields once: `skill_path`, `change`, `context`
+and `request`. The skill path comes from the configured skill root and action
+catalog. Context contains only role/action, selected spec and requirement,
+store, prepared workspace and related changes. The request is a JSON string;
+its literal placeholders, quotes and shell syntax are never evaluated.
+
+This is a textual instruction to read the skill, not a shell command or a
+guaranteed slash-command invocation. The skill lives outside the conversation's
+checkout, so its explicit path matters. Tasks and repository bindings are read
+from the selected spec instead of duplicating them in the prompt.
+
+Only automation-specific exceptions remain: Propose uses the runner-created
+folder, Update is already authorized to revise/repair planning, and Apply keeps
+validation local and reports evidence. A short shared section preserves role
+boundaries and the terminal JSON required by the runner. Event validation,
+workspace preparation, locking and postflight audits remain in Python.
+Retired stage templates are kept under `archive/prompts/`; they are not built.
 
 `role-workflow.json` fixes the store, managed workspace parent, skill root, saved
 profile and timeout. Requests cannot override them. The current deployment uses:

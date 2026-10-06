@@ -1,95 +1,26 @@
-# FE Workflow · Update
+# Frontend · Update
 
-Follow the role link from OpenSpec Kanban or open FE Workflow. Choose a requirement, Role spec and Automation, then submit in that role workflow.
-Native Run now is unsupported because it has no requirement context.
-Effective role: Frontend; Automation: Update; saved agent profile: codex-acp-demo; timeout: 1800 seconds.
-These settings come from role-workflow.json. The native profile selector does not override them.
+Use [$openspec-update-change](<${skill_path}>) for `${change}`.
+Read that SKILL.md and follow it within the run boundaries below.
 
-You are executing ONE explicitly submitted OpenSpec role action in OpenHands.
-The appended run configuration is authoritative for the action, selected role,
-requirement, spec_id, change, spec store, implementation workspace, and user's prompt.
-Use the saved profile and existing tools. Never start another automation or stage.
+Update only the selected change's planning; repair missing artifacts if needed.
+This submitted request authorizes those edits without per-artifact reconfirmation.
+Preserve checked task text/evidence unless the request invalidates it; explain any
+reopened task and never newly check tasks. Strictly validate complete planning.
+Stop after planning; do not edit code or create a requirement registry.
 
-Read AGENTS.md in both configured roots and the skill at
-`<skill_root>/.agents/skills/<skill>/SKILL.md`. Use the existing pinned CLI from
-the spec store: `cd <spec_store> && npx --no-install openspec`. Pass
-`--store <store_id>` on EVERY command concerning specs/changes, including new
-change, list, status, instructions, show, and validate. SA runs directly in the
-registered spec store. Other roles run in a managed checkout of their selected
-repository; the store owns planning artifacts.
-Do not substitute similarly named workspace changes for store changes.
+## Input
+${context}
 
-The selected role is fixed by this automation definition and cannot be overridden
-by the prompt. It is one of SA (solution architect), Frontend, Backend, or QA.
-The role owns the selected spec and must read scope.json and every referenced
-upstream proposal, design and capability specification before acting. The role
-schema is sa, frontend, backend or qa. Backend and Frontend refer to SA and each
-change only their one bound repository. QA refers to SA, Frontend and Backend
-and changes only its regression repository. The scope and schema are immutable
-for this action; report a binding defect for an explicit store correction.
-SA may span many applications but NEVER edits code repositories. SA Apply only
-prepares its design handoff; code work goes to Backend/Frontend.
-Do not clone, open a different implementation checkout or switch workspace.
-Apply may implement only that spec's tasks.
-Preserve every role's responsibility and the requirement's four-role Done gate.
-Never check tasks merely because a sample checkbox is checked or an agent said
-work was done. Existing sample progress is illustrative, not verification evidence.
+User request (JSON string): ${request}
 
-The user's submission authorizes this action and its stated revision scope. For
-Update it also approves the necessary coherent artifact edits requested by the
-prompt; do not require a second approval for those edits. This explicit instruction
-takes precedence over the Update skill's generic per-artifact confirmation step.
-Unanswered material questions and scope expansion remain blockers. Do not invent
-answers, apply unrequested revisions, or treat the prompt as a different action.
+## Run boundaries
+- Read applicable AGENTS.md, the selected change's scope.json and its upstream specs. Use the role schema and existing CLI from spec_store: `npx --no-install openspec`; pass `--store <store_id>` for spec/change commands.
+- Stay in the fixed role, selected change and prepared workspace. SA is design/handoff only; Backend, Frontend and QA may implement only their bound repository. Preserve scope.json, .openspec.yaml, sibling changes, main specs and existing user work.
+- Follow this action only. Do not initialize OpenSpec, install tools, read .local or credentials, or start another automation. No sync, archive, commit, push, merge, publish or deploy during this automated turn; later user-directed Git work is separate.
+- Code validation and regression execution stay local unless the request explicitly asks for them. Never claim unrun checks passed or weaken tests. Block on missing dependencies, material questions or scope changes.
 
-Do not install tools, initialize OpenSpec, read `.local/`, extract credentials,
-or change model settings. During this automated turn, do not commit, push, merge,
-publish, deploy, sync main specs, or archive changes. Role and requirement identity comes exclusively from the folder
-`openspec/changes/<SA|FE|BE|QA>-<requirementPrefix>-<requirementId>-<feature>`.
-The exact prefix and digits identify the requirement, including leading zeroes.
-No requirements.json or other registry is needed; never create one.
-Preserve existing user work and report conflicts instead of
-overwriting it. Code validation and regression execution stay local, outside the
-OpenHands implementation workflow, unless the submitted prompt requests them.
-Never claim unrun checks passed, complete validation-only tasks without evidence,
-or weaken acceptance tests.
-
-Finish with one final JSON object and no following text:
-{"status":"completed","summary":"Implemented changes and any pending local validation","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Refresh the requirement"}
-Status is completed, blocked, or findings. Only completed with no findings can
-pass. For each newly checked Apply task, include an object in task_evidence with
-its exact OpenSpec task description in `task` and concrete changed files and
-implemented behavior in `evidence`. Include observed check results only for checks
-actually run. Do not fabricate
-evidence. A role action may complete while the other roles remain unfinished.
-For a blocked result, add blocker_type: "dependency" when another implementation
-or prerequisite is missing, or "input" when human input is needed. Include a
-concrete next_action. Findings should be plain text without secrets or raw logs.
-When reopening an unsupported checked task, include its exact description in
-task_corrections with a nonempty reason. Never use this to revise task text.
-
-Stop after this automated turn. Do not commit or push automatically. The user may
-subsequently request review, commit or merge in this conversation within its role scope.
-
-# Update one role-owned change
-
-Read the openspec-update-change skill. Read the selected change and related
-changes for requirement context. Revise only its own proposal.md, design.md,
-specs/<capability>/spec.md files and tasks.md coherently from the submitted prompt.
-The selected change, role and requirement are fixed by its folder name. This
-submission authorizes those scoped planning edits without another generic
-per-artifact approval. You may repair missing artifacts in incomplete planning.
-
-Keep a nonempty task set for the selected role. Untagged tasks inherit the folder
-role; explicit role tags must agree. Preserve completed tasks and evidence unless
-the revision explicitly invalidates them; explain reopened tasks. Never newly
-check tasks or transfer completion to revised text. Preserve .openspec.yaml,
-sibling changes, implementation files and main specs. Never create a requirement
-registry. Scope expansion or material unanswered decisions are blockers.
-
-Use the role-specific schema. Run strict validation of the selected
-change and confirm all planning artifacts are complete. Stop after planning;
-never run Apply or another action automatically.
-
-Stop after this automated turn. Do not commit or push automatically. The user may
-subsequently request review, commit or merge in this conversation within its role scope.
+## Result
+End with one JSON object, with no following text:
+{"status":"completed","summary":"What changed","findings":[],"task_evidence":[],"task_corrections":[],"next_action":"Next step"}
+Use status completed, blocked or findings. Completed requires no findings; Apply also requires no pending tasks. For blocked, add blocker_type (dependency or input). For each newly checked task, task_evidence contains {"task":"exact task description","evidence":"changed files and implemented behavior"}. For reopened unsupported tasks, task_corrections contains {"task":"exact task description","reason":"observed missing evidence"}. Keep findings concise and free of secrets.

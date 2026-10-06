@@ -24,7 +24,7 @@ class BuildTests(unittest.TestCase):
         (self.root / "runtime" / "delivery.py").write_text("# Fixture delivery\n")
         (self.root / "runtime" / "actions.json").write_text(builder.ACTION_SOURCE.read_text())
         (self.root / "prompts").mkdir()
-        (self.root / "prompts" / "role-common.md").write_text("Role boundaries.\n")
+        (self.root / "prompts" / "role-common.md").write_text("Role boundaries.\n${context}\n${request}\n")
         for stage in builder.ROLE_STAGES:
             (self.root / "prompts" / f"role-{stage}.md").write_text(f"Role {stage}.\n")
 
@@ -43,14 +43,12 @@ class BuildTests(unittest.TestCase):
                     self.assertEqual(json.loads((directory / "tarball/config.json").read_text()),
                                      {**self.role_config, "mode": "role", "stage": stage, "role": role})
                     prompt = (directory / "tarball/prompt.md").read_text()
-                    self.assertTrue(prompt.endswith(f"Role boundaries.\n\nRole {stage}.\n"))
-                    workflow = {"SA": "SA", "Frontend": "FE", "Backend": "BE", "QA": "QA"}[role] + " Workflow"
-                    self.assertTrue(prompt.startswith(f"# {workflow} · {builder.ACTION_LABELS[stage]}\n"))
-                    self.assertIn(f"or open {workflow}.", prompt)
-                    self.assertIn("Role spec and Automation", prompt)
-                    self.assertIn(f"Effective role: {role}; Automation: {builder.ACTION_LABELS[stage]}; saved agent profile: codex-acp-demo", prompt)
-                    self.assertIn("Native Run now is unsupported", prompt)
-                    self.assertIn("native profile selector does not override", prompt)
+                    self.assertIn(f"Role {stage}.\n\nRole boundaries.\n", prompt)
+                    self.assertTrue(prompt.startswith(f"# {role} · {builder.ACTION_LABELS[stage]}\n"))
+                    self.assertIn(f"[${builder.ACTION_SKILLS[stage]}](<${{skill_path}}>)", prompt)
+                    self.assertIn("${change}", prompt)
+                    self.assertIn("${context}", prompt)
+                    self.assertIn("${request}", prompt)
                     self.assertEqual((directory / "tarball/run.py").read_text(), (self.root / "runtime/run.py").read_text())
                     self.assertEqual((directory / "tarball/delivery.py").read_text(), (self.root / "runtime/delivery.py").read_text())
                     self.assertEqual((directory / "tarball/actions.json").read_text(), builder.ACTION_SOURCE.read_text())
@@ -91,7 +89,7 @@ class BuildTests(unittest.TestCase):
     def test_missing_source_leaves_existing_bundles_untouched(self):
         builder.build(self.root)
         before = {path: path.read_bytes() for path in (self.root / "automations").rglob("*") if path.is_file()}
-        (self.root / "prompts" / "role-common.md").write_text("Changed common rules.\n")
+        (self.root / "prompts" / "role-common.md").write_text("Changed common rules.\n${context}\n${request}\n")
         (self.root / "prompts" / "role-apply.md").unlink()
         with self.assertRaisesRegex(ValueError, "role-apply.md"):
             builder.build(self.root)
@@ -108,6 +106,14 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not be empty"):
             builder.build(self.root)
         self.assertFalse((self.root / "automations").exists())
+
+    def test_missing_or_unknown_prompt_fields_write_no_bundles(self):
+        for template in ("${context}", "${context}\n${request}\n${unknown}"):
+            with self.subTest(template=template):
+                (self.root / "prompts/role-common.md").write_text(template)
+                with self.assertRaisesRegex(ValueError, "prompt placeholders"):
+                    builder.build(self.root)
+                self.assertFalse((self.root / "automations").exists())
 
 
 if __name__ == "__main__":
