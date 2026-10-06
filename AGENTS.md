@@ -4,10 +4,9 @@ This repository stores local OpenHands Automation Git Sync definitions. The targ
 application is configured in `role-workflow.json`; this repository is not that application.
 
 - Edit `role-workflow.json`, `prompts/`, and `runtime/`,
-  then run `npm run build`. Generate exactly 24 fixed role/action bundles:
-  SA, Frontend, Backend and QA each have Propose, Update, Review, Apply, Commit
-  and Merge Request. Review and delivery are deterministic; the other actions
-  use the saved agent profile.
+  then run `npm run build`. Generate exactly 12 fixed role/action bundles:
+  SA, Frontend, Backend and QA each have Propose, Update and Apply, using the saved agent profile.
+  Review, Commit and Merge Request definitions are retired; pause them and preserve their history.
 - `automations/` contains complete generated bundles required by Git Sync. Commit them.
 - The seven numbered stages and three generic role definitions are retired. Keep
   their recovery archive outside `automations/`; never regenerate or reconnect them.
@@ -43,10 +42,10 @@ application is configured in `role-workflow.json`; this repository is not that a
   prompts must reuse the target's existing OpenSpec skills.
 - Run `npm test` and `npm run check` before committing.
 - Do not modify the target application while maintaining these definitions.
-- Agent conversations must not commit or push. Only explicit deterministic Commit
-  or Merge Request actions may deliver an unchanged reviewed snapshot, within the
-  selected role's scope. SA delivery is restricted to specifications. Each stage
-  stops at its stated boundary and reports blockers honestly.
+- Automated turns stop after planning or implementation and must not commit or push.
+  Review, commit and merge are user-directed follow-up actions in the related
+  conversation. Never dispatch Git delivery from the Apps. SA remains spec-only.
+  Each automated stage stops at its boundary and reports blockers honestly.
 
 Apps in `apps/` are independent packages, installed separately from Automation Git
 Sync. Keep each App's source, manifest, build tooling, tests, and checked-in

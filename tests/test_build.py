@@ -28,9 +28,9 @@ class BuildTests(unittest.TestCase):
         for stage in builder.ROLE_STAGES:
             (self.root / "prompts" / f"role-{stage}.md").write_text(f"Role {stage}.\n")
 
-    def test_twenty_four_complete_bundles_bind_exact_role_and_action(self):
-        self.assertEqual(len(builder.build(self.root)), 144)
-        self.assertEqual(len(list((self.root / "automations").iterdir())), 24)
+    def test_twelve_complete_bundles_bind_exact_role_and_action(self):
+        self.assertEqual(len(builder.build(self.root)), 72)
+        self.assertEqual(len(list((self.root / "automations").iterdir())), 12)
         for role in builder.ROLES:
             for stage in builder.ROLE_STAGES:
                 with self.subTest(role=role, stage=stage):

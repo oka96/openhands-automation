@@ -166,6 +166,96 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             self.client.evidence({**context, 'spec_store': str(self.home)})
 
+    def test_retired_delivery_definitions_are_paused_with_history_and_ids_intact(self):
+        self.client.setup()
+        active_ids = [row['id'] for row in self.automations]
+        retired = [{'id': identity(), 'name': f'OpenSpec {role} · {label}', 'enabled': True, 'state': 'ACTIVE',
+                    'trigger': bridge.trigger(role, stage)} for role in bridge.ROLES for stage, label in bridge.RETIRED_STAGES.items()]
+        self.automations.extend(retired)
+        state = self.client.state()
+        state['bindings'].update({bridge.pair_key(role, stage): {'state': 'ready'}
+                                  for role in bridge.ROLES for stage in bridge.RETIRED_STAGES})
+        self.client.save(state)
+        self.runs = [{'id': identity(), 'automation_id': row['id'], 'status': 'COMPLETED', 'conversation_id': None} for row in retired]
+        history = copy.deepcopy(self.runs)
+        self.assertFalse(self.client.probe()['ready'])
+        self.runs[-1]['status'] = 'RUNNING'
+        before = len(self.calls)
+        with self.assertRaisesRegex(bridge.BridgeError, 'pending or running'):
+            self.client.setup()
+        self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls[before:]))
+        self.runs = history
+        self.assertTrue(self.client.setup()['ready'])
+        self.assertEqual(self.runs, history)
+        self.assertEqual([row['id'] for row in self.automations[:12]], active_ids)
+        self.assertTrue(all(row['enabled'] is False and row['state'] == 'ACTIVE' for row in self.automations[12:]))
+        self.assertEqual(len(self.client.state()['bindings']), 12)
+        self.assertFalse(any(method == 'DELETE' for _, method, *_ in self.calls))
+        before = len(self.calls)
+        self.assertTrue(self.client.setup()['ready'])
+        self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls[before:]))
+
+    def test_removed_delivery_inputs_are_rejected_before_dispatch(self):
+        self.client.setup()
+        for extra in ({'stage': stage} for stage in bridge.RETIRED_STAGES):
+            with self.assertRaises(bridge.BridgeError):
+                self.client.dispatch({**self.input(), **extra})
+        for field in ('target', 'review_id', 'message'):
+            with self.assertRaises(bridge.BridgeError):
+                self.client.dispatch({**self.input(), field: 'legacy'})
+        self.assertEqual(self.events, [])
+
+    def test_conversation_lookup_matches_exact_spec_and_survives_new_bridge(self):
+        self.client.setup()
+        context = {'spec_store': str(self.store), 'role': 'SA', 'requirement_id': 'REQ-001', 'spec_id': 'SA-REQ-001-first'}
+        for day, feature in ((1, 'first'), (3, 'second'), (2, 'first')):
+            request = self.input()
+            request.update(spec_id='SA-REQ-001-' + feature, change='SA-REQ-001-' + feature, context_change='SA-REQ-001-' + feature)
+            self.client.dispatch(request)
+            row = self.runs[-1]
+            row.update(status='RUNNING', started_at=f'2026-10-0{day}T00:00:00Z')
+            bridge.delivery.save_conversation_link({**context, 'spec_id': request['spec_id'], 'stage': 'update'}, identity(), row['id'])
+        before = len(self.calls)
+        result = self.new_client().conversation(context)
+        self.assertEqual(result['conversation']['run_id'], self.runs[-1]['id'])
+        self.assertEqual(result['conversation']['status'], 'RUNNING')
+        self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls[before:]))
+        self.assertIsNone(self.client.conversation({**context, 'role': 'QA', 'spec_id': 'QA-REQ-001-first'})['conversation'])
+        for edit in ({'spec_store': str(self.home)}, {'spec_id': 'FE-REQ-001-first'}, {'spec_id': '../escape'}):
+            with self.assertRaises(bridge.BridgeError):
+                self.client.conversation({**context, **edit})
+        self.runs[-1]['conversation_id'] = identity()  # mismatched native association cannot win
+        self.assertEqual(self.client.conversation(context)['conversation']['run_id'], self.runs[0]['id'])
+
+    def test_legacy_terminal_reports_supply_conversation_links_and_bad_history_fails_closed(self):
+        target, path, report = self.completed_report('completed', role='SA')
+        self.runs[0]['started_at'] = '2026-10-06T00:00:00Z'
+        context = {key: report[key] for key in ('role', 'requirement_id', 'spec_id')} | {'spec_store': str(self.store)}
+        self.assertEqual(self.client.conversation(context)['conversation']['id'], report['conversation_id'])
+        self.runs[0]['started_at'] = 'not-a-date'
+        with self.assertRaisesRegex(bridge.BridgeError, 'start time'):
+            self.client.conversation(context)
+        self.runs[0]['id'] = '../unsafe'
+        with self.assertRaisesRegex(bridge.BridgeError, 'native conversation run'):
+            self.client.conversation(context)
+        path.unlink()
+        self.runs = []
+        self.assertIsNone(self.client.conversation(context)['conversation'])
+
+    def test_conversation_history_paginates_and_reports_limits_without_mutation(self):
+        _, _, report = self.completed_report('completed', role='SA')
+        self.runs[0]['started_at'] = '2026-10-06T00:00:00Z'
+        context = {key: report[key] for key in ('role', 'requirement_id', 'spec_id')} | {'spec_store': str(self.store)}
+        older = [{**self.runs[0], 'id': identity(), 'conversation_id': None} for _ in range(100)]
+        self.runs = older + self.runs
+        before = len(self.calls)
+        self.assertEqual(self.client.conversation(context)['conversation']['id'], report['conversation_id'])
+        self.assertTrue(any('offset=100' in url for url, *_ in self.calls[before:]))
+        self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls[before:]))
+        self.runs = [{**self.runs[0], 'id': identity()} for _ in range(1001)]
+        with self.assertRaisesRegex(bridge.BridgeError, 'limited to 1000'):
+            self.client.conversation(context)
+
     def test_new_sa_requirement_event_carries_explicit_applications_and_prompt(self):
         self.client.setup()
         value = self.input('propose', 'SA')
@@ -199,7 +289,7 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(self.client.probe()['ready'])
         self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls[before:]))
         self.assertTrue(self.client.setup()['ready'])
-        self.assertEqual(len(self.automations), 25)
+        self.assertEqual(len(self.automations), 13)
         self.assertIn(unrelated, self.automations)
         self.assertEqual(self.runs, history)
         self.assertEqual(self.client.state()['source'], source)
@@ -230,7 +320,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.automations), 9)
         self.assertTrue(self.client.setup()['ready'])
         self.assertEqual(sum(method == 'DELETE' for _, method, *_ in self.calls), 10)
-        self.assertEqual(len(self.automations), 24)
+        self.assertEqual(len(self.automations), 12)
 
     def test_valid_role_cannot_use_another_roles_automation_id(self):
         self.client.setup()
@@ -253,16 +343,16 @@ class BridgeTests(unittest.TestCase):
         self.automations.append(copy.deepcopy(legacy))
         probe = self.client.probe()
         self.assertFalse(probe['ready'])
-        self.assertIn('dedicated role automations', probe['message'])
+        self.assertIn('planning and implementation', probe['message'])
         self.assertNotIn('skill', probe['message'].lower())
         self.assertEqual(probe['automations'], [])
         self.assertFalse(self.client.root.exists())
         self.assertTrue(all(method == 'GET' for _, method, *_ in self.calls))
         setup = self.client.setup()
         self.assertTrue(setup['ready'])
-        self.assertEqual(setup['message'], 'Connected to all 24 role automations.')
+        self.assertEqual(setup['message'], 'Connected to all 12 role automations.')
         self.assertEqual(self.webhooks[0]['name'], 'OpenSpec role dashboard · explicit skill requests')
-        self.assertEqual(len(setup['automations']), 24)
+        self.assertEqual(len(setup['automations']), 12)
         self.assertNotIn(legacy, self.automations)
         self.assertEqual(setup['configuration']['spec_store'], str(self.store))
         self.assertNotIn('session-secret', json.dumps(setup))
@@ -271,7 +361,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.client.root.stat().st_mode & 0o777, 0o700)
         self.assertTrue(self.client.probe()['ready'])
         self.client.setup()
-        self.assertEqual(self.count('', 'POST'), 24)
+        self.assertEqual(self.count('', 'POST'), 12)
         self.assertEqual(self.count('/webhooks', 'POST'), 1)
 
     def test_all_roles_and_skills_dispatch_exact_signed_per_run_inputs(self):
@@ -287,7 +377,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertEqual(self.client.dispatch(data), result)
                 self.assertEqual(self.events[-1]['role'], role)
                 self.assertEqual(self.events[-1]['request'], data['request'])
-        self.assertEqual(len(self.events), 24)
+        self.assertEqual(len(self.events), 12)
         self.assertEqual(self.automations, before)
 
     def test_completed_propose_retry_survives_created_target_and_returns_same_run(self):
@@ -315,8 +405,8 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             self.client.setup()
         self.assertTrue(self.client.setup()['ready'])
-        self.assertEqual(self.count('', 'POST'), 24)
-        self.assertEqual(len(self.automations), 24)
+        self.assertEqual(self.count('', 'POST'), 12)
+        self.assertEqual(len(self.automations), 12)
 
     def test_unknown_source_registration_never_overwrites_or_registers_twice(self):
         self.failure = 'source'

@@ -43,8 +43,8 @@ Unanswered material questions and scope expansion remain blockers. Do not invent
 answers, apply unrequested revisions, or treat the prompt as a different action.
 
 Do not install tools, initialize OpenSpec, read `.local/`, extract credentials,
-change model settings, commit, push, merge, publish, deploy, sync main specs, or
-archive changes. Role and requirement identity comes exclusively from the folder
+or change model settings. During this automated turn, do not commit, push, merge,
+publish, deploy, sync main specs, or archive changes. Role and requirement identity comes exclusively from the folder
 `openspec/changes/<SA|FE|BE|QA>-<requirementPrefix>-<requirementId>-<feature>`.
 The exact prefix and digits identify the requirement, including leading zeroes.
 No requirements.json or other registry is needed; never create one.
@@ -67,6 +67,9 @@ or prerequisite is missing, or "input" when human input is needed. Include a
 concrete next_action. Findings should be plain text without secrets or raw logs.
 When reopening an unsupported checked task, include its exact description in
 task_corrections with a nonempty reason. Never use this to revise task text.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.
 
 # Apply only the selected spec's tasks
 
@@ -93,7 +96,7 @@ skill's generic instruction to run every test/browser scenario as part of Apply.
 Record concrete implementation evidence for every newly checked task in
 task_evidence using its exact task description. Leave validation-only tasks
 unchecked and report them as pending local validation; never invent passing
-results. Review and delivery do not require a test-result record. Pending tasks
+results. Manual review and Git actions happen later in the related conversation. Pending tasks
 mean blocked, not completed. If tasks
 were already checked, inspect supporting evidence without inventing work or
 assuming illustrative checkboxes prove delivery. Leave the requirement active.
@@ -103,3 +106,6 @@ the observed reason in task_corrections: [{"task":"exact description","reason":"
 A reopened task is pending, so return blocked with the true blocker and next
 action. Reopening without a reason, changing task text, or changing another
 spec's tasks remains forbidden.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.

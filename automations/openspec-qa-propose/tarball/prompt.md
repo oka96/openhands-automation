@@ -43,8 +43,8 @@ Unanswered material questions and scope expansion remain blockers. Do not invent
 answers, apply unrequested revisions, or treat the prompt as a different action.
 
 Do not install tools, initialize OpenSpec, read `.local/`, extract credentials,
-change model settings, commit, push, merge, publish, deploy, sync main specs, or
-archive changes. Role and requirement identity comes exclusively from the folder
+or change model settings. During this automated turn, do not commit, push, merge,
+publish, deploy, sync main specs, or archive changes. Role and requirement identity comes exclusively from the folder
 `openspec/changes/<SA|FE|BE|QA>-<requirementPrefix>-<requirementId>-<feature>`.
 The exact prefix and digits identify the requirement, including leading zeroes.
 No requirements.json or other registry is needed; never create one.
@@ -67,6 +67,9 @@ or prerequisite is missing, or "input" when human input is needed. Include a
 concrete next_action. Findings should be plain text without secrets or raw logs.
 When reopening an unsupported checked task, include its exact description in
 task_corrections with a nonempty reason. Never use this to revise task text.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.
 
 # Propose one role-owned change
 
@@ -96,3 +99,6 @@ Preserve .openspec.yaml, sibling changes, main specs and implementation files.
 Validate the new change strictly and confirm planning is complete. All tasks
 start unchecked. Stop at planning and report unanswered material questions as
 blocked. A partial folder remains visible for a later explicit Update.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.

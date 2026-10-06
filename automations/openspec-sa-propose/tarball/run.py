@@ -250,7 +250,7 @@ def require_role_trigger(env, config):
                 or event["event_key"] != f"{stage}.requested"):
             raise RunError("Invalid native role event wrapper; source and event key must match this action")
         event = event["payload"]
-    if (not isinstance(event, dict) or not ROLE_EVENT_FIELDS <= set(event) or set(event) - ROLE_EVENT_FIELDS - {"application_id", "applications", "target", "review_id", "message"}
+    if (not isinstance(event, dict) or not ROLE_EVENT_FIELDS <= set(event) or set(event) - ROLE_EVENT_FIELDS - {"application_id", "applications"}
             or event.get("schema") != "openspec-role-dashboard/v3"
             or event.get("stage") != stage or event.get("approval") != stage
             or event.get("type") != f"{stage}.requested" or event.get("role") != role):
@@ -272,14 +272,6 @@ def require_role_trigger(env, config):
     if (not isinstance(event["request"], str) or len(event["request"]) > 10000
             or (stage in ("propose", "update") and not event["request"].strip())):
         raise RunError("Role Propose and Update require a prompt; prompts must be at most 10000 characters")
-    if stage in ("review", "commit", "merge-request"):
-        if event.get("target") not in ("specs", "code") or role == "SA" and event["target"] != "specs":
-            raise RunError("Choose specifications or the bound code repository; SA can deliver specifications only")
-        if stage != "review" and (not delivery.canonical_id(event.get("review_id")) or not isinstance(event.get("message"), str)
-                                  or not 0 < len(event["message"].strip()) <= 500 or re.search(r"[\x00-\x1f]", event["message"])):
-            raise RunError("Delivery requires a selected review and one-line commit message or PR title")
-    elif any(key in event for key in ("target", "review_id", "message")):
-        raise RunError("Delivery inputs are only valid for Review, Commit or Merge Request")
     if "applications" in event and not new_requirement:
         raise RunError("Application bindings are only accepted when SA creates a new requirement")
     try:
@@ -554,27 +546,23 @@ def prepare_role_workspace(config):
         return config["workspace"]
     directory = managed_directory(parent, config["change"])
     directory.mkdir(exist_ok=True)
-    if config.get("target") == "specs":
-        target = managed_directory(directory, "planning")
-        target.mkdir(exist_ok=True)
-    else:
-        app = config["scope"]["applications"][0]
-        target = managed_directory(directory, app["id"])
-        if not target.exists():
-            # Clone into a fresh sibling then rename; failed clones never look reusable.
-            temporary = directory / (".clone-" + str(uuid.uuid4()))
-            try:
-                git_command(["clone", "--", app["repository"], str(temporary)], cwd=str(directory))
-                temporary.rename(target)
-            finally:
-                if temporary.exists():
-                    shutil.rmtree(temporary)
-        if not (target / ".git").is_dir() or (target / ".git").is_symlink():
-            raise RunError("Managed checkout must be a standalone Git repository")
-        if git_command(["rev-parse", "--show-toplevel"], cwd=str(target)) != str(target):
-            raise RunError("Managed checkout root does not match the selected repository")
-        if git_command(["remote", "get-url", "origin"], cwd=str(target)) != app["repository"]:
-            raise RunError("Managed checkout origin does not match this spec; preserve it and resolve the mismatch")
+    app = config["scope"]["applications"][0]
+    target = managed_directory(directory, app["id"])
+    if not target.exists():
+        # Clone into a fresh sibling then rename; failed clones never look reusable.
+        temporary = directory / (".clone-" + str(uuid.uuid4()))
+        try:
+            git_command(["clone", "--", app["repository"], str(temporary)], cwd=str(directory))
+            temporary.rename(target)
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+    if not (target / ".git").is_dir() or (target / ".git").is_symlink():
+        raise RunError("Managed checkout must be a standalone Git repository")
+    if git_command(["rev-parse", "--show-toplevel"], cwd=str(target)) != str(target):
+        raise RunError("Managed checkout root does not match the selected repository")
+    if git_command(["remote", "get-url", "origin"], cwd=str(target)) != app["repository"]:
+        raise RunError("Managed checkout origin does not match this spec; preserve it and resolve the mismatch")
     config["workspace_parent"] = str(parent)
     config["workspace"] = str(target)
     return str(target)
@@ -584,8 +572,6 @@ def role_preflight(config, event):
     """Validate effective event inputs and current associations under both locks."""
     config = {**config, **{key: event[key] for key in ("change", "context_change", "requirement_id", "spec_id", "request")},
               "dashboard_request_id": event["request_id"], "skill": ROLE_SKILLS[config["stage"]]}
-    if "target" in event:
-        config["target"] = event["target"]
     validate_role_store(config)
     changes = read_role_changes(config)
     validate_requirement_tasks(config, changes)
@@ -781,17 +767,6 @@ def run_role(client, config, event, prompt, env):
         config.update(effective)
         claim_dashboard_request(event, Path.home() / ".openhands/apps/openspec-progress/role-consumed")
         prepare_role_workspace(config)
-        if config["stage"] in ("review", "commit", "merge-request"):
-            try:
-                if config["stage"] == "review":
-                    review = delivery.create_review(config, event["target"], env.get("AUTOMATION_RUN_ID", ""))
-                    return {"status": "completed", "summary": f"Reviewed {len(review['files'])} files in {event['target']}. Snapshot {review['id']}.",
-                            "findings": [], "next_action": "Inspect the review diff in this role app, then choose Commit or Merge Request."}
-                receipt = delivery.deliver(config, event["review_id"], event["target"], config["stage"], event["message"])
-                return {"status": "completed", "summary": f"Committed {receipt['commit']} on {receipt['branch']}." + (" " + receipt["url"] if "url" in receipt else " Local commit; nothing pushed."),
-                        "findings": [], "next_action": "Open the delivery receipt in this role app."}
-            except delivery.DeliveryError as error:
-                raise RunError(str(error), outcome="needs_review") from None
         before_spec = delivery.spec_snapshot(config)
         result = None
         try:
@@ -997,6 +972,7 @@ class Client:
             if created.get("id") != self.conversation_id:
                 raise RunError("OpenHands returned an unexpected conversation ID")
             if role_run:
+                delivery.save_conversation_link(config, self.conversation_id, run_id)
                 # Creation runs any initial message; send it only after naming succeeds.
                 named = self.request(path, method="PATCH", deadline=deadline,
                                      body={"title": config["spec_id"]})

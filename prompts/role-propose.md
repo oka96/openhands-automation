@@ -26,3 +26,6 @@ Preserve .openspec.yaml, sibling changes, main specs and implementation files.
 Validate the new change strictly and confirm planning is complete. All tasks
 start unchecked. Stop at planning and report unanswered material questions as
 blocked. A partial folder remains visible for a later explicit Update.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.

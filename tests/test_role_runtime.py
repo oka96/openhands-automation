@@ -196,33 +196,18 @@ class RoleRunnerTests(unittest.TestCase):
         client.return_value.run.assert_called_once()
         self.assertEqual(json.loads((self.change / "scope.json").read_text())["applications"], self.event["applications"])
 
-    def test_deterministic_review_and_delivery_do_not_start_conversations(self):
+    def test_retired_delivery_actions_cannot_start_conversations(self):
         for stage in ("review", "commit", "merge-request"):
             self.set_event(stage, "SA")
-            self.event["target"] = "specs"
-            if stage != "review":
-                self.event.update(review_id=str(uuid.uuid4()), message="Deliver contract")
             self.write_event()
-            with mock.patch.object(runner.delivery, "create_review", return_value={"id": str(uuid.uuid4()), "files": []}) as review, \
-                    mock.patch.object(runner.delivery, "deliver", return_value={"commit": "a" * 40, "branch": "main"}) as deliver:
-                code, output, client, _ = self.invoke()
-            self.assertEqual(code, 0, output)
+            code, output, client, _ = self.invoke()
+            self.assertNotEqual(code, 0, output)
             client.return_value.run.assert_not_called()
-            self.assertEqual(review.call_count, int(stage == "review"))
-            self.assertEqual(deliver.call_count, int(stage != "review"))
 
-    def test_planning_to_review_to_commit_uses_real_files_history_and_git(self):
-        git = lambda *args: runner.delivery.git(self.store, *args).decode().strip()
-        git("init", "-b", "main")
-        git("config", "user.name", "Role Workflow Fixture")
-        git("config", "user.email", "fixture@example.invalid")
-        git("remote", "add", "origin", "https://github.com/example/spec-store.git")
-        git("add", ".")
-        git("commit", "-m", "Initial role requirements")
-        before_head = git("rev-parse", "HEAD")
+    def test_planning_saves_distinct_revisions_without_git_delivery(self):
         for stage in ("propose", "update", "apply"):
             self.env["AUTOMATION_RUN_ID"] = str(uuid.uuid4())
-            self.set_event(stage, "SA", feature="delivery", native=True)
+            self.set_event(stage, "SA", feature="handoff", native=True)
             code, output, client, _ = self.invoke()
             self.assertEqual(code, 0, output)
             client.return_value.run.assert_called_once()
@@ -231,23 +216,6 @@ class RoleRunnerTests(unittest.TestCase):
             revisions = runner.delivery.history(context)["revisions"]
         self.assertEqual({row["stage"] for row in revisions}, {"propose", "update", "apply"})
         self.assertEqual(len({row["run_id"] for row in revisions}), 3)
-        self.set_event("review", "SA", feature="delivery", native=True)
-        code, output, client, _ = self.invoke()
-        self.assertEqual(code, 0, output)
-        client.return_value.run.assert_not_called()
-        with mock.patch.object(runner.Path, "home", return_value=self.root):
-            reviews = runner.delivery.history(context)["reviews"]
-        self.assertEqual(len(reviews), 1)
-        self.assertGreater(reviews[0]["file_count"], 0)
-        self.set_event("commit", "SA", feature="delivery", native=True)
-        self.event.update(review_id=reviews[0]["id"], message="Deliver reviewed specification")
-        self.write_event()
-        code, output, client, _ = self.invoke()
-        self.assertEqual(code, 0, output)
-        client.return_value.run.assert_not_called()
-        self.assertNotEqual(git("rev-parse", "HEAD"), before_head)
-        self.assertTrue(all(name.startswith("openspec/changes/SA-REQ-006-delivery/") for name in git("diff", "--name-only", before_head, "HEAD").splitlines()))
-        self.assertEqual(git("status", "--porcelain"), "")
 
     def test_second_spec_can_reuse_task_ids_and_descriptions(self):
         self.set_event("apply", "Frontend", feature="second")

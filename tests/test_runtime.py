@@ -64,7 +64,10 @@ class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
+        home_patch = mock.patch.object(runner.Path, "home", return_value=self.root)
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
         self.workspace = self.root / "workspace"
         (self.workspace / "openspec" / "changes" / "example-change").mkdir(parents=True)
         for skill in set(runner.STAGES.values()):
@@ -73,7 +76,7 @@ class RunnerTests(unittest.TestCase):
             (directory / "SKILL.md").write_text("Use OpenSpec")
         self.config = {"workspace": str(self.workspace), "stage": "verify", "change": "example-change",
                        "profile": "codex-acp-demo", "request": "", "timeout_seconds": 60,
-                       "canvas_url": "http://127.0.0.1:8002"}
+                       "canvas_url": "http://127.0.0.1:8002", "spec_store": str(self.workspace)}
         self.config_path = self.root / "config.json"
         self.write_config()
         self.prompt_path = self.root / "prompt.md"
@@ -216,7 +219,7 @@ class RunnerTests(unittest.TestCase):
         runner.prepare_role_workspace(config)
         server = FakeServer()
         with contextlib.redirect_stdout(io.StringIO()):
-            self.client(server).run(config, 'Update the selected SA spec')
+            self.client(server).run(config, 'Update the selected SA spec', run_id='00000000-1111-4111-8111-111111111111')
         body = next(kwargs['body'] for path, kwargs in server.calls if path == '/api/conversations')
         self.assertEqual(body['workspace'], {'kind': 'LocalWorkspace', 'working_dir': str(store)})
         self.assertFalse(body['worktree'])
@@ -230,8 +233,12 @@ class RunnerTests(unittest.TestCase):
                               "requirement_id": "REQ-006", "context_change": "context-change",
                               "change": "context-change", "spec_id": f"{runner.ROLE_PREFIXES[role]}-REQ-006-feature"}
                     with contextlib.redirect_stdout(io.StringIO()):
-                        self.client(server).run(config, "role prompt", run_id="role-run-id")
+                        self.client(server).run(config, "role prompt", run_id="00000000-1111-4111-8111-111111111111")
                     body = next(kwargs["body"] for path, kwargs in server.calls if path == "/api/conversations")
+                    saved = json.loads((self.root / '.openhands/apps/openspec-progress/role-conversations/00000000-1111-4111-8111-111111111111.json').read_text())
+                    self.assertEqual(saved['conversation_id'], body['conversation_id'])
+                    self.assertEqual(saved['context']['spec_id'], config['spec_id'])
+                    self.assertEqual(saved['stage'], stage)
                     self.assertFalse(body["autotitle"])
                     self.assertIsNone(body["initial_message"])
                     mutations = [(path, call) for path, call in server.calls if call.get("method") in ("POST", "PATCH")]
@@ -245,7 +252,7 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(body["tags"], {
                         "requirement": "REQ-006", "role": role, "openspecstage": stage,
                         "openspecspec": config["spec_id"],
-                        "automationrunid": "role-run-id", "automationtrigger": "automation"})
+                        "automationrunid": "00000000-1111-4111-8111-111111111111", "automationtrigger": "automation"})
 
     def test_role_naming_failure_never_starts_agent(self):
         for outcome in ("transport", "rejected"):
@@ -263,7 +270,7 @@ class RunnerTests(unittest.TestCase):
                                        clock=lambda: server.now, sleep=server.sleep)
                 config = {**self.config, "mode": "role", "role": "SA", "requirement_id": "REQ-006", "spec_id": "SA-REQ-006-feature"}
                 with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(runner.RunError):
-                    client.run(config, "role prompt")
+                    client.run(config, "role prompt", run_id="00000000-1111-4111-8111-111111111111")
                 self.assertFalse(any(path.endswith("/events") or path.endswith("/run") for path, _ in server.calls))
                 created = next(call['body'] for path, call in server.calls if path == '/api/conversations')
                 self.assertIsNone(created['initial_message'])
@@ -293,7 +300,7 @@ class RunnerTests(unittest.TestCase):
         server.now = 15
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(runner.RunError, "timed out"):
             self.client(server).run({**self.config, "mode": "role", "requirement_id": "REQ-006", "role": "SA", "spec_id": "SA-REQ-006-feature"},
-                                    "role prompt", deadline=60)
+                                    "role prompt", deadline=60, run_id="00000000-1111-4111-8111-111111111111")
         self.assertEqual(server.now, 30)
         self.assertTrue(server.calls[-1][0].endswith("/pause"))
 

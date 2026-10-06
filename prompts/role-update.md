@@ -17,3 +17,6 @@ registry. Scope expansion or material unanswered decisions are blockers.
 Use the role-specific schema. Run strict validation of the selected
 change and confirm all planning artifacts are complete. Stop after planning;
 never run Apply or another action automatically.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.

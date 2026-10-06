@@ -18,10 +18,12 @@ import secrets
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime
 
 REPOSITORY = Path('/Users/oka/Desktop/openhands-automation')
 SOURCE = 'openspec-role-dashboard'
@@ -34,6 +36,7 @@ _delivery_spec.loader.exec_module(delivery)
 ROLES = ('SA', 'Frontend', 'Backend', 'QA')
 ROLE_PREFIXES = {'SA': 'SA', 'Frontend': 'FE', 'Backend': 'BE', 'QA': 'QA'}
 PAIRS = tuple((role, stage) for role in ROLES for stage in STAGES)
+RETIRED_STAGES = {'review': 'Review', 'commit': 'Commit', 'merge-request': 'Merge Request'}
 STATUSES = ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'SKIPPED')
 BUNDLE_FILES = ('config.json', 'prompt.md', 'run.py', 'delivery.py', 'actions.json')
 SOURCE_NAME = 'OpenSpec role dashboard · explicit skill requests'
@@ -160,6 +163,22 @@ def retired_definitions(inventory):
     return result
 
 
+def retired_delivery_definitions(inventory):
+    result = []
+    for role in ROLES:
+        for stage, label in RETIRED_STAGES.items():
+            rows = [row for row in inventory if row.get('name') == f'OpenSpec {role} · {label}']
+            require(len(rows) <= 1, 'Duplicate retired delivery definitions; inspect native history')
+            if rows:
+                row = rows[0]
+                require(identifier(row.get('id')) and isinstance(row.get('trigger'), dict)
+                        and all(row['trigger'].get(key) == value for key, value in trigger(role, stage).items()),
+                        'A retired delivery name has unfamiliar routing; inspect it before pausing')
+                if row.get('enabled') is not False:
+                    result.append(row)
+    return result
+
+
 class Bridge:
     def __init__(self, service, home, *, env=None, requester=request_json, repository=None):
         env = os.environ if env is None else env
@@ -233,6 +252,7 @@ class Bridge:
         require(len(ids) == len(result), 'Duplicate role automation identities')
         if allow_retired:
             ids.update(row['id'] for row in retired_definitions(inventory))
+            ids.update(row['id'] for row in retired_delivery_definitions(inventory))
         require(not any(row.get('enabled') and isinstance(row.get('trigger'), dict)
                         and row['trigger'].get('source') == SOURCE and row.get('id') not in ids for row in inventory),
                 'Another enabled automation uses the role dashboard source; resolve routing first')
@@ -284,7 +304,7 @@ class Bridge:
                     'Resolve the incomplete previous connection before migration')
             return {'version': 2, 'bindings': {}, 'source': state.get('source')}
         require(isinstance(state, dict) and state.get('version') == 2 and isinstance(state.get('bindings'), dict)
-                and set(state['bindings']) <= {pair_key(*pair) for pair in PAIRS}, 'Invalid private connection state; inspect the local setup')
+                and set(state['bindings']) <= {pair_key(role, stage) for role in ROLES for stage in (*STAGES, *RETIRED_STAGES)}, 'Invalid private connection state; inspect the local setup')
         return state
 
     def save(self, state):
@@ -337,12 +357,13 @@ class Bridge:
                 {'id': selected[pair_key(role, stage)]['id'], 'name': automation_name(role, stage), 'stage': stage, 'role': role}
                 for role, stage in PAIRS if pair_key(role, stage) in selected], 'configuration': self.safe_config(),
                 'message': f'Connected to all {len(PAIRS)} role automations.' if ready else
-                'Connect automations to install dedicated role automations and remove superseded OpenSpec definitions.'}
+                'Connect automations to install planning and implementation actions and retire delivery automations.'}
 
     def probe(self):
         inventory = self.inventory()
         selected = self.selected(inventory, allow_retired=True)
-        ready = self.readiness(selected, self.bundles(), self.state(), self.inventory('/webhooks', 'webhooks')) and not retired_definitions(inventory)
+        ready = (self.readiness(selected, self.bundles(), self.state(), self.inventory('/webhooks', 'webhooks'))
+                 and not retired_definitions(inventory) and not retired_delivery_definitions(inventory))
         return self.result('probe', ready, selected)
 
     def setup(self):
@@ -352,6 +373,7 @@ class Bridge:
             inventory = self.inventory()
             selected = self.selected(inventory, allow_retired=True)
             retired = retired_definitions(inventory)
+            retired_delivery = retired_delivery_definitions(inventory)
             webhooks = self.inventory('/webhooks', 'webhooks')
             source = state.get('source')
             existing_sources = [row for row in webhooks if row.get('source') == SOURCE]
@@ -360,7 +382,7 @@ class Bridge:
             require(not source or source.get('state') == 'ready',
                     'Source registration outcome is unknown; inspect the local connection before retrying')
             # Validate every candidate before any retirement, upload or installation.
-            for row in retired:
+            for row in retired + retired_delivery:
                 history = self.api('/' + row['id'] + '/runs?limit=100&offset=0')
                 counts = history.get('status_counts') if isinstance(history, dict) else None
                 require(isinstance(counts, dict) and set(counts) <= set(STATUSES)
@@ -370,7 +392,14 @@ class Bridge:
                         'A superseded automation has pending or running work; let it finish before reconnecting')
             for row in retired:
                 self.api('/' + row['id'], method='DELETE')
-            require(not retired_definitions(self.inventory()), 'Superseded definitions remain; reconnect before running')
+            for row in retired_delivery:
+                self.api('/' + row['id'], method='PATCH', body={'enabled': False})
+            inventory = self.inventory()
+            require(not retired_definitions(inventory) and not retired_delivery_definitions(inventory),
+                    'Superseded definitions remain active; reconnect before running')
+            state['bindings'] = {key: value for key, value in state['bindings'].items()
+                                 if key in {pair_key(*pair) for pair in PAIRS}}
+            self.save(state)
             for stage, bundle in bundles.items():
                 saved = state['bindings'].get(stage)
                 current = selected.get(stage)
@@ -427,7 +456,7 @@ class Bridge:
 
     def validate_input(self, data, *, context=True):
         fields = {'automation_id', 'request_id', 'stage', 'spec_store', 'requirement_id', 'context_change', 'role', 'spec_id', 'change', 'request'}
-        require(isinstance(data, dict) and fields <= set(data) and set(data) <= fields | {'application_id', 'applications', 'target', 'review_id', 'message'}, 'Unexpected role automation input fields')
+        require(isinstance(data, dict) and fields <= set(data) and set(data) <= fields | {'application_id', 'applications'}, 'Unexpected role automation input fields')
         if 'application_id' in data:
             require(slug(data['application_id']) and len(data['application_id']) <= 80, 'Invalid application selection')
         require(identifier(data['automation_id']) and identifier(data['request_id']), 'Invalid automation or request ID')
@@ -444,14 +473,6 @@ class Bridge:
                 'Role actions must use canonical changes in the selected requirement')
         require(isinstance(data['request'], str) and len(data['request']) <= 10000 and '\x00' not in data['request']
                 and (data['stage'] not in ('propose', 'update') or data['request'].strip()), 'Propose and Update require a prompt; maximum 10000 characters')
-        if data['stage'] in ('review', 'commit', 'merge-request'):
-            require(data.get('target') in ('specs', 'code') and not (data['role'] == 'SA' and data['target'] == 'code'), 'SA can deliver specifications only')
-            if data['stage'] != 'review':
-                require(identifier(data.get('review_id')) and isinstance(data.get('message'), str)
-                        and 0 < len(data['message'].strip()) <= 500 and not re.search(r'[\x00-\x1f]', data['message']),
-                        'Select a review and enter a one-line commit message or PR title')
-        else:
-            require(not any(key in data for key in ('target', 'review_id', 'message')), 'Unexpected delivery inputs')
         require('applications' not in data or new_requirement, 'Applications are only accepted for a new SA requirement')
         if new_requirement:
             require(isinstance(data.get('applications'), list) and 1 <= len(data['applications']) <= 20
@@ -594,6 +615,66 @@ class Bridge:
             require(len(page['runs']) == 100, 'Incomplete native Automation history')
         raise BridgeError('Run was not found in the latest 1000 entries; inspect native Automation history')
 
+    def conversation(self, data):
+        fields = {'spec_store', 'role', 'requirement_id', 'spec_id'}
+        require(isinstance(data, dict) and set(data) == fields and data['spec_store'] == self.config['spec_store'],
+                'Conversation lookup must select this store and one role spec')
+        try:
+            context = delivery.identity(data)
+        except delivery.DeliveryError as error:
+            raise BridgeError(str(error)) from None
+        root = local_path(data['spec_store']) / 'openspec/changes' / data['spec_id']
+        require(root.resolve() == root and root.is_dir(), 'The selected role spec is unavailable; refresh the board')
+        # Lookup is independent of connection readiness and never uploads or dispatches.
+        selected = self.selected(self.inventory(), allow_retired=True)
+        matches, seen = [], set()
+        deadline = time.monotonic() + 20
+        for stage in STAGES:
+            definition = selected.get(pair_key(data['role'], stage))
+            if not definition:
+                continue
+            for offset in range(0, 1000, 100):
+                require(time.monotonic() < deadline, 'Conversation lookup timed out; refresh to retry')
+                page = self.api(f"/{definition['id']}/runs?limit=100&offset={offset}")
+                require(isinstance(page, dict) and isinstance(page.get('runs'), list) and len(page['runs']) <= 100
+                        and type(page.get('total')) is int and page['total'] >= offset + len(page['runs']),
+                        'Invalid native conversation history')
+                require(page['total'] <= 1000, 'Conversation lookup is limited to 1000 runs per action; inspect native history')
+                for row in page['runs']:
+                    require(isinstance(row, dict) and identifier(row.get('id')) and row['id'] not in seen
+                            and row.get('automation_id') == definition['id'] and row.get('status') in STATUSES
+                            and (row.get('conversation_id') is None or identifier(row['conversation_id'])),
+                            'Invalid native conversation run')
+                    seen.add(row['id'])
+                    conversation_id = None
+                    try:
+                        saved = read_json(self.home / '.openhands/apps/openspec-progress/role-conversations' / (row['id'] + '.json'))
+                        require(isinstance(saved, dict) and set(saved) == {'version', 'context', 'stage', 'run_id', 'conversation_id'}
+                                and type(saved['version']) is int and saved['version'] == 1
+                                and saved['context'] == context and saved['stage'] == stage and saved['run_id'] == row['id']
+                                and identifier(saved['conversation_id'])
+                                and row.get('conversation_id') in (None, saved['conversation_id']), 'Invalid conversation association')
+                        conversation_id = saved['conversation_id']
+                    except (BridgeError, OSError, ValueError):
+                        report = self.run_report(row, data['role'], stage)
+                        if report and report['spec_id'] == data['spec_id'] and report['requirement_id'] == data['requirement_id']:
+                            conversation_id = row.get('conversation_id')
+                    if conversation_id:
+                        try:
+                            stamp = row['started_at']
+                            require(isinstance(stamp, str) and len(stamp) <= 80, 'Invalid conversation start time')
+                            started = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                            require(started.tzinfo is not None, 'Conversation start time needs a timezone')
+                        except (KeyError, ValueError, TypeError):
+                            raise BridgeError('Invalid conversation start time') from None
+                        matches.append((started, {'id': conversation_id, 'run_id': row['id'], 'stage': stage,
+                                                   'status': row['status'], 'started_at': stamp}))
+                if offset + len(page['runs']) >= page['total']:
+                    break
+                require(len(page['runs']) == 100, 'Incomplete native conversation history')
+        latest = max(matches, key=lambda item: (item[0], item[1]['run_id']))[1] if matches else None
+        return {'kind': 'conversation', 'context': context, 'conversation': latest}
+
     def evidence(self, data, *, record=False):
         fields = {'spec_store', 'role', 'requirement_id', 'spec_id'} | ({'kind', 'id'} if record else set())
         require(isinstance(data, dict) and set(data) == fields and data['spec_store'] == self.config['spec_store'],
@@ -608,12 +689,12 @@ class Bridge:
 
 def handle(value):
     require(isinstance(value, dict) and set(value) <= {'action', 'service', 'home', 'input'}
-            and value.get('action') in ('probe', 'setup', 'dispatch', 'status', 'history', 'record'), 'Invalid role bridge request')
+            and value.get('action') in ('probe', 'setup', 'dispatch', 'status', 'history', 'record', 'conversation'), 'Invalid role bridge request')
     bridge = Bridge(value.get('service'), value.get('home'))
     action = value['action']
     if action in ('history', 'record'):
         return bridge.evidence(value.get('input'), record=action == 'record')
-    if action in ('dispatch', 'status'):
+    if action in ('dispatch', 'status', 'conversation'):
         return getattr(bridge, action)(value.get('input'))
     require('input' not in value, 'Unexpected role bridge inputs')
     return getattr(bridge, action)()

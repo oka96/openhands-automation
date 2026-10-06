@@ -23,7 +23,7 @@ skill's generic instruction to run every test/browser scenario as part of Apply.
 Record concrete implementation evidence for every newly checked task in
 task_evidence using its exact task description. Leave validation-only tasks
 unchecked and report them as pending local validation; never invent passing
-results. Review and delivery do not require a test-result record. Pending tasks
+results. Manual review and Git actions happen later in the related conversation. Pending tasks
 mean blocked, not completed. If tasks
 were already checked, inspect supporting evidence without inventing work or
 assuming illustrative checkboxes prove delivery. Leave the requirement active.
@@ -33,3 +33,6 @@ the observed reason in task_corrections: [{"task":"exact description","reason":"
 A reopened task is pending, so return blocked with the true blocker and next
 action. Reopening without a reason, changing task text, or changing another
 spec's tasks remains forbidden.
+
+Stop after this automated turn. Do not commit or push automatically. The user may
+subsequently request review, commit or merge in this conversation within its role scope.
